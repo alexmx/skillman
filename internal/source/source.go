@@ -12,7 +12,6 @@ type FetchResult struct {
 	Source    string // source identifier (e.g. "github.com/org/repo/skill" or "local")
 	Ref       string // git ref (tag, branch, commit) or empty for local
 	CommitSHA string // resolved commit SHA or empty for local
-	IsLocal   bool
 }
 
 // ParsedRef holds a parsed skill reference like "github.com/org/repo/skill@v1.0".

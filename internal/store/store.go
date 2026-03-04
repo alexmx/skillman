@@ -30,10 +30,6 @@ func (s *Store) Init() error {
 	return nil
 }
 
-func (s *Store) SkillPath(source, name string) string {
-	return filepath.Join(s.Root, source, name)
-}
-
 func (s *Store) LocalPath(name string) string {
 	return filepath.Join(s.Root, "local", name)
 }

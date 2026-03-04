@@ -8,8 +8,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var verbose bool
-
 var rootCmd = &cobra.Command{
 	Use:     "skillman",
 	Short:   "A package manager for Agent Skills",
@@ -26,5 +24,4 @@ func Execute() {
 
 func init() {
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 }

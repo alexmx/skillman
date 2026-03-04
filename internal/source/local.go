@@ -41,6 +41,5 @@ func FetchLocal(path string) (*FetchResult, error) {
 		Name:      s.Frontmatter.Name,
 		SourceDir: absPath,
 		Source:    "local",
-		IsLocal:   true,
 	}, nil
 }
