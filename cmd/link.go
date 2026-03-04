@@ -81,15 +81,7 @@ var linkCmd = &cobra.Command{
 				fmt.Printf("Linked %s -> %s (%s)\n", l.Name, l.Agent, l.LinkPath)
 			}
 
-			entry := reg.Find(name)
-			ref := name
-			if entry != nil && entry.Source != "local" {
-				ref = entry.Source
-				if entry.Ref != "" {
-					ref += "@" + entry.Ref
-				}
-			}
-			if err := workspace.AddToWorkspaceConfig(wd, ref); err != nil {
+			if err := workspace.AddToWorkspaceConfig(wd, name); err != nil {
 				return fmt.Errorf("updating .skillman.yml: %w", err)
 			}
 		}

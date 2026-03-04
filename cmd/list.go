@@ -35,11 +35,7 @@ var listCmd = &cobra.Command{
 		for _, e := range reg.Skills {
 			ref := e.Ref
 			if ref != "" && e.CommitSHA != "" {
-				short := e.CommitSHA
-				if len(short) > 7 {
-					short = short[:7]
-				}
-				ref = ref + "@" + short
+				ref = ref + "@" + shortSHA(e.CommitSHA)
 			} else if ref == "" {
 				ref = "-"
 			}

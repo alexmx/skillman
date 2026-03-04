@@ -196,8 +196,8 @@ func TestRemoveFromWorkspaceConfig(t *testing.T) {
 
 	wc := &WorkspaceConfig{
 		Skills: []string{
-			"github.com/org/repo/skill-a@v1",
-			"github.com/org/repo/skill-b@v2",
+			"skill-a",
+			"skill-b",
 		},
 	}
 	SaveWorkspaceConfig(dir, wc)
@@ -211,7 +211,7 @@ func TestRemoveFromWorkspaceConfig(t *testing.T) {
 	if len(loaded.Skills) != 1 {
 		t.Fatalf("expected 1 skill, got %d", len(loaded.Skills))
 	}
-	if loaded.Skills[0] != "github.com/org/repo/skill-b@v2" {
+	if loaded.Skills[0] != "skill-b" {
 		t.Errorf("wrong skill remaining: %s", loaded.Skills[0])
 	}
 }

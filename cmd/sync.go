@@ -3,11 +3,9 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/alexmx/skillman/internal/config"
 	"github.com/alexmx/skillman/internal/registry"
-	"github.com/alexmx/skillman/internal/source"
 	"github.com/alexmx/skillman/internal/store"
 	"github.com/alexmx/skillman/internal/workspace"
 	"github.com/spf13/cobra"
@@ -16,7 +14,7 @@ import (
 var syncCmd = &cobra.Command{
 	Use:   "sync",
 	Short: "Sync workspace symlinks with .skillman.yml",
-	Long:  "Reads .skillman.yml and ensures the workspace symlinks match the declared skills. Installs missing skills from their sources.",
+	Long:  "Reads .skillman.yml and ensures the workspace symlinks match the declared skills.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
 		if err != nil {
@@ -53,24 +51,11 @@ var syncCmd = &cobra.Command{
 
 		// Resolve desired skill names
 		desiredNames := make(map[string]bool)
-		for _, raw := range wc.Skills {
-			ref := source.ParseRef(raw)
-			// Extract skill name from the ref
-			name := extractSkillName(ref)
-
+		for _, name := range wc.Skills {
 			// Check if the skill is installed
 			entry := reg.Find(name)
 			if entry == nil {
-				fmt.Printf("Skill %q not in store, installing from %s...\n", name, raw)
-				installArgs := []string{raw}
-				if err := runInstall(cmd, installArgs); err != nil {
-					return fmt.Errorf("installing %s: %w", raw, err)
-				}
-				// Reload registry after install
-				reg, err = registry.Load(cfg)
-				if err != nil {
-					return err
-				}
+				return fmt.Errorf("skill %q not installed. Run 'skillman install' first", name)
 			}
 
 			desiredNames[name] = true
@@ -126,19 +111,6 @@ var syncCmd = &cobra.Command{
 		fmt.Println("Sync complete.")
 		return nil
 	},
-}
-
-func extractSkillName(ref source.ParsedRef) string {
-	if ref.IsLocal {
-		// For local paths, use directory name
-		parts := strings.Split(strings.TrimRight(ref.Source, "/"), "/")
-		return parts[len(parts)-1]
-	}
-
-	// For remote refs, use the last path component
-	src := ref.Source
-	parts := strings.Split(src, "/")
-	return parts[len(parts)-1]
 }
 
 func init() {

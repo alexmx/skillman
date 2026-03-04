@@ -216,7 +216,7 @@ func AddToWorkspaceConfig(workspaceRoot, skillRef string) error {
 	return SaveWorkspaceConfig(workspaceRoot, wc)
 }
 
-// RemoveFromWorkspaceConfig removes a skill ref from .skillman.yml.
+// RemoveFromWorkspaceConfig removes a skill from .skillman.yml by name.
 func RemoveFromWorkspaceConfig(workspaceRoot, skillName string) error {
 	wc, err := LoadWorkspaceConfig(workspaceRoot)
 	if err != nil {
@@ -228,14 +228,7 @@ func RemoveFromWorkspaceConfig(workspaceRoot, skillName string) error {
 
 	var filtered []string
 	for _, s := range wc.Skills {
-		// Match by name (last part of the ref, before @)
-		ref := s
-		if idx := strings.LastIndex(ref, "@"); idx != -1 {
-			ref = ref[:idx]
-		}
-		parts := strings.Split(ref, "/")
-		name := parts[len(parts)-1]
-		if name != skillName {
+		if s != skillName {
 			filtered = append(filtered, s)
 		}
 	}
