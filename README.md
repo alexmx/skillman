@@ -4,6 +4,10 @@ A package manager for [Agent Skills](https://agentskills.io).
 
 Skillman manages Agent Skills — install from GitHub or local paths into a central store, then link them into any workspace for any supported AI coding agent.
 
+<p align="center">
+<img width="800" alt="terminal" src="https://github.com/user-attachments/assets/cf3e3385-eac7-4bef-ab09-40c322bf357a" />
+<p/>
+
 ## Features
 
 - **Install** — Fetch skills from GitHub repos or local directories into a central store
