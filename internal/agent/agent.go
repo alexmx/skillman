@@ -1,6 +1,10 @@
 package agent
 
-import "github.com/alexmx/skillman/internal/config"
+import (
+	"sort"
+
+	"github.com/alexmx/skillman/internal/config"
+)
 
 type Agent struct {
 	Name      string
@@ -17,6 +21,9 @@ func FromConfig(cfg config.Config) []Agent {
 			Enabled:   ac.Enabled,
 		})
 	}
+	sort.Slice(agents, func(i, j int) bool {
+		return agents[i].Name < agents[j].Name
+	})
 	return agents
 }
 
