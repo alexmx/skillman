@@ -9,10 +9,9 @@ import (
 	"github.com/alexmx/skillman/internal/registry"
 	"github.com/alexmx/skillman/internal/source"
 	"github.com/alexmx/skillman/internal/store"
+	"github.com/alexmx/skillman/internal/tui"
 	"github.com/spf13/cobra"
 )
-
-var installAll bool
 
 var installCmd = &cobra.Command{
 	Use:   "install <source>",
@@ -24,7 +23,7 @@ Sources:
   github.com/org/repo          GitHub repository (discovers all skills)
   github.com/org/repo/skill    Specific skill from a GitHub repository
   github.com/org/repo@v1.0     Pin to a specific tag or ref`,
-	Example: `  # Install all skills from a GitHub repository (interactive picker)
+	Example: `  # Install skills from a GitHub repository
   skillman install github.com/anthropics/skills
 
   # Install a specific skill from a repository
@@ -33,9 +32,6 @@ Sources:
   # Pin to a specific version
   skillman install github.com/anthropics/skills@v1.0
 
-  # Install all skills without prompting
-  skillman install github.com/anthropics/skills --all
-
   # Install from a local directory
   skillman install ./my-skill`,
 	Args: cobra.ExactArgs(1),
@@ -43,7 +39,6 @@ Sources:
 }
 
 func init() {
-	installCmd.Flags().BoolVar(&installAll, "all", false, "install all discovered skills without prompting")
 	rootCmd.AddCommand(installCmd)
 }
 
@@ -83,6 +78,20 @@ func installLocal(ref source.ParsedRef, s *store.Store, reg *registry.Registry, 
 		return nil
 	}
 
+	printSecurityWarning()
+
+	fmt.Printf("\nSkill: %s\n", result.Name)
+	fmt.Printf("Source: %s\n\n", result.SourceDir)
+
+	yes, err := tui.Confirm("Install this skill?")
+	if err != nil {
+		return err
+	}
+	if !yes {
+		fmt.Println("Cancelled.")
+		return nil
+	}
+
 	// Create symlink in store/local/
 	storePath := s.LocalPath(result.Name)
 	if err := os.MkdirAll(s.LocalPath(""), 0o755); err != nil {
@@ -109,16 +118,22 @@ func installLocal(ref source.ParsedRef, s *store.Store, reg *registry.Registry, 
 	}
 
 	fmt.Printf("Installed %q from local path.\n", result.Name)
+	fmt.Println()
+	printSecurityWarning()
 	return nil
 }
 
 func installGitHub(ref source.ParsedRef, s *store.Store, reg *registry.Registry, cfg config.Config) error {
-	results, cleanup, err := source.FetchGitHub(ref.Source, ref.Ref, installAll)
+	results, cleanup, err := source.FetchGitHub(ref.Source, ref.Ref)
 	if err != nil {
 		return err
 	}
 	if cleanup != nil {
 		defer cleanup()
+	}
+
+	if len(results) == 0 {
+		return nil
 	}
 
 	for _, result := range results {
@@ -146,5 +161,11 @@ func installGitHub(ref source.ParsedRef, s *store.Store, reg *registry.Registry,
 		return fmt.Errorf("saving registry: %w", err)
 	}
 
+	fmt.Println()
+	printSecurityWarning()
 	return nil
+}
+
+func printSecurityWarning() {
+	fmt.Println(tui.SecurityWarning())
 }

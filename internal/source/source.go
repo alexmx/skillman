@@ -23,16 +23,24 @@ type ParsedRef struct {
 	IsLocal bool
 }
 
+func normalizeSource(s string) string {
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.TrimSuffix(s, ".git")
+	return s
+}
+
 func ParseRef(raw string) ParsedRef {
 	if isLocalRef(raw) {
 		return ParsedRef{Raw: raw, Source: raw, IsLocal: true}
 	}
 
-	source := raw
+	normalized := normalizeSource(raw)
+	source := normalized
 	ref := ""
-	if idx := strings.LastIndex(raw, "@"); idx != -1 {
-		source = raw[:idx]
-		ref = raw[idx+1:]
+	if idx := strings.LastIndex(normalized, "@"); idx != -1 {
+		source = normalized[:idx]
+		ref = normalized[idx+1:]
 	}
 
 	return ParsedRef{

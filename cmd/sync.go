@@ -76,9 +76,19 @@ var syncCmd = &cobra.Command{
 			desiredNames[name] = true
 		}
 
+		// Detect agents present in the workspace, prompt if not all found
+		agents, err := pickAgents(wd, cfg)
+		if err != nil {
+			return err
+		}
+		if len(agents) == 0 {
+			fmt.Println("No agents selected.")
+			return nil
+		}
+
 		// Link all desired skills
 		for name := range desiredNames {
-			linked, err := workspace.Link(wd, name, cfg, s)
+			linked, err := workspace.Link(wd, name, agents, s)
 			if err != nil {
 				fmt.Printf("Warning: could not link %s: %v\n", name, err)
 				continue

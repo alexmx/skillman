@@ -4,15 +4,17 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/alexmx/skillman/internal/version"
 	"github.com/spf13/cobra"
 )
 
 var verbose bool
 
 var rootCmd = &cobra.Command{
-	Use:   "skillman",
-	Short: "A package manager for Agent Skills",
-	Long:  "Skillman manages Agent Skills — install from GitHub or local paths, link into workspaces for any supported AI coding agent.",
+	Use:     "skillman",
+	Short:   "A package manager for Agent Skills",
+	Long:    "Skillman manages Agent Skills — install from GitHub or local paths, link into workspaces for any supported AI coding agent.",
+	Version: version.Version,
 }
 
 func Execute() {
@@ -23,5 +25,6 @@ func Execute() {
 }
 
 func init() {
+	rootCmd.SetVersionTemplate("{{.Version}}\n")
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 }

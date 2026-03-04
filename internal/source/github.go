@@ -13,10 +13,16 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 )
 
-// FetchGitHub clones a GitHub repo, discovers skills, and returns results.
-// The caller must call the returned cleanup function when done with the results.
-func FetchGitHub(source, ref string, all bool) (results []FetchResult, cleanup func(), err error) {
-	owner, repo, subpath, err := ParseGitHubSource(source)
+type cloneResult struct {
+	tmpDir    string
+	commitSHA string
+	ref       string
+	owner     string
+	repo      string
+}
+
+func cloneRepo(source, ref string) (*cloneResult, func(), error) {
+	owner, repo, _, err := ParseGitHubSource(source)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -26,7 +32,7 @@ func FetchGitHub(source, ref string, all bool) (results []FetchResult, cleanup f
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating temp dir: %w", err)
 	}
-	cleanup = func() { os.RemoveAll(tmpDir) }
+	cleanup := func() { os.RemoveAll(tmpDir) }
 
 	fmt.Printf("Cloning %s/%s...\n", owner, repo)
 
@@ -54,24 +60,42 @@ func FetchGitHub(source, ref string, all bool) (results []FetchResult, cleanup f
 		}
 	}
 
-	// Get commit SHA
 	head, err := r.Head()
 	if err != nil {
 		cleanup()
 		return nil, nil, fmt.Errorf("getting HEAD: %w", err)
 	}
-	commitSHA := head.Hash().String()
 
-	// Resolve the ref name
 	resolvedRef := ref
 	if resolvedRef == "" {
 		resolvedRef = head.Name().Short()
 	}
 
-	// Discover skills
-	searchRoot := tmpDir
+	return &cloneResult{
+		tmpDir:    tmpDir,
+		commitSHA: head.Hash().String(),
+		ref:       resolvedRef,
+		owner:     owner,
+		repo:      repo,
+	}, cleanup, nil
+}
+
+// FetchGitHub clones a GitHub repo, discovers skills, and presents an interactive picker.
+// The caller must call the returned cleanup function when done with the results.
+func FetchGitHub(source, ref string) (results []FetchResult, cleanup func(), err error) {
+	_, _, subpath, err := ParseGitHubSource(source)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	cr, cleanup, err := cloneRepo(source, ref)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	searchRoot := cr.tmpDir
 	if subpath != "" {
-		searchRoot = filepath.Join(tmpDir, subpath)
+		searchRoot = filepath.Join(cr.tmpDir, subpath)
 	}
 
 	skills, err := discoverSkills(searchRoot)
@@ -85,47 +109,72 @@ func FetchGitHub(source, ref string, all bool) (results []FetchResult, cleanup f
 		return nil, nil, fmt.Errorf("no skills found in %s", source)
 	}
 
-	// If subpath specified a specific skill, return just that one
-	if subpath != "" && len(skills) == 1 {
-		all = true
+	// Always let user pick which skills to install
+	names := make([]string, len(skills))
+	descs := make([]string, len(skills))
+	dirs := make([]string, len(skills))
+	for i, s := range skills {
+		names[i] = s.Frontmatter.Name
+		descs[i] = s.Frontmatter.Description
+		dirs[i] = s.Dir
 	}
-
-	// Let user pick if not --all
-	selected := skills
-	if !all && len(skills) > 1 {
-		names := make([]string, len(skills))
-		descs := make([]string, len(skills))
-		for i, s := range skills {
-			names[i] = s.Frontmatter.Name
-			descs[i] = s.Frontmatter.Description
-		}
-		indices, err := tui.PickSkills(names, descs)
-		if err != nil {
-			cleanup()
-			return nil, nil, err
-		}
-		if len(indices) == 0 {
-			fmt.Println("No skills selected.")
-			cleanup()
-			return nil, cleanup, nil
-		}
-		selected = make([]*skill.Skill, len(indices))
-		for i, idx := range indices {
-			selected[i] = skills[idx]
-		}
+	indices, err := tui.PickSkillsWithOptions("Select skills to install", tui.SecurityWarning(), names, descs, nil, dirs)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	if len(indices) == 0 {
+		fmt.Println("No skills selected.")
+		cleanup()
+		return nil, nil, nil
+	}
+	selected := make([]*skill.Skill, len(indices))
+	for i, idx := range indices {
+		selected[i] = skills[idx]
 	}
 
 	for _, s := range selected {
 		results = append(results, FetchResult{
 			Name:      s.Frontmatter.Name,
 			SourceDir: s.Dir,
-			Source:    fmt.Sprintf("github.com/%s/%s/%s", owner, repo, s.Frontmatter.Name),
-			Ref:       resolvedRef,
-			CommitSHA: commitSHA,
+			Source:    fmt.Sprintf("github.com/%s/%s/%s", cr.owner, cr.repo, s.Frontmatter.Name),
+			Ref:       cr.ref,
+			CommitSHA: cr.commitSHA,
 		})
 	}
 
 	return results, cleanup, nil
+}
+
+// FetchGitHubDirect clones a repo and fetches a specific skill by name without
+// showing a picker. Searches the entire repo for the skill. Used by update.
+func FetchGitHubDirect(repoSource, skillName, ref string) (*FetchResult, func(), error) {
+	cr, cleanup, err := cloneRepo(repoSource, ref)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Search the entire repo for the skill
+	skills, err := discoverSkills(cr.tmpDir)
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("discovering skills: %w", err)
+	}
+
+	for _, s := range skills {
+		if s.Frontmatter.Name == skillName {
+			return &FetchResult{
+				Name:      s.Frontmatter.Name,
+				SourceDir: s.Dir,
+				Source:    fmt.Sprintf("github.com/%s/%s/%s", cr.owner, cr.repo, s.Frontmatter.Name),
+				Ref:       cr.ref,
+				CommitSHA: cr.commitSHA,
+			}, cleanup, nil
+		}
+	}
+
+	cleanup()
+	return nil, nil, fmt.Errorf("skill %q not found in %s/%s", skillName, cr.owner, cr.repo)
 }
 
 func discoverSkills(root string) ([]*skill.Skill, error) {

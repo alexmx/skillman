@@ -5,11 +5,12 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/alexmx/skillman/internal/agent"
 	"github.com/alexmx/skillman/internal/config"
 	"github.com/alexmx/skillman/internal/store"
 )
 
-func testSetup(t *testing.T) (string, config.Config, *store.Store) {
+func testSetup(t *testing.T) (string, config.Config, *store.Store, []agent.Agent) {
 	t.Helper()
 
 	workDir := t.TempDir()
@@ -36,13 +37,14 @@ description: A test skill.
 # Test
 `), 0o644)
 
-	return workDir, cfg, s
+	agents := agent.EnabledAgents(cfg)
+	return workDir, cfg, s, agents
 }
 
 func TestLink(t *testing.T) {
-	workDir, cfg, s := testSetup(t)
+	workDir, _, s, agents := testSetup(t)
 
-	linked, err := Link(workDir, "test-skill", cfg, s)
+	linked, err := Link(workDir, "test-skill", agents, s)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -65,19 +67,19 @@ func TestLink(t *testing.T) {
 }
 
 func TestUnlink(t *testing.T) {
-	workDir, cfg, s := testSetup(t)
+	workDir, cfg, s, agents := testSetup(t)
 
 	// Link first
-	Link(workDir, "test-skill", cfg, s)
+	Link(workDir, "test-skill", agents, s)
 
 	// Unlink
-	agents, err := Unlink(workDir, "test-skill", cfg)
+	unlinked, err := Unlink(workDir, "test-skill", cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(agents) != 2 {
-		t.Fatalf("expected 2 agents unlinked, got %d", len(agents))
+	if len(unlinked) != 2 {
+		t.Fatalf("expected 2 agents unlinked, got %d", len(unlinked))
 	}
 
 	// Verify symlinks are removed
@@ -88,7 +90,7 @@ func TestUnlink(t *testing.T) {
 }
 
 func TestStatus(t *testing.T) {
-	workDir, cfg, s := testSetup(t)
+	workDir, cfg, s, agents := testSetup(t)
 
 	// Initially empty
 	skills, err := Status(workDir, cfg, s)
@@ -100,13 +102,40 @@ func TestStatus(t *testing.T) {
 	}
 
 	// Link and check
-	Link(workDir, "test-skill", cfg, s)
+	Link(workDir, "test-skill", agents, s)
 	skills, err = Status(workDir, cfg, s)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(skills) != 2 {
 		t.Errorf("expected 2 linked skills, got %d", len(skills))
+	}
+}
+
+func TestDetectAgents(t *testing.T) {
+	workDir, cfg, _, _ := testSetup(t)
+
+	// No agent dirs exist yet
+	detected := DetectAgents(workDir, cfg)
+	if len(detected) != 0 {
+		t.Errorf("expected 0 detected agents, got %d", len(detected))
+	}
+
+	// Create .claude/ directory
+	os.MkdirAll(filepath.Join(workDir, ".claude"), 0o755)
+	detected = DetectAgents(workDir, cfg)
+	if len(detected) != 1 {
+		t.Fatalf("expected 1 detected agent, got %d", len(detected))
+	}
+	if detected[0].Name != "claude" {
+		t.Errorf("expected claude, got %s", detected[0].Name)
+	}
+
+	// Create .cursor/ directory
+	os.MkdirAll(filepath.Join(workDir, ".cursor"), 0o755)
+	detected = DetectAgents(workDir, cfg)
+	if len(detected) != 2 {
+		t.Errorf("expected 2 detected agents, got %d", len(detected))
 	}
 }
 
@@ -188,9 +217,9 @@ func TestRemoveFromWorkspaceConfig(t *testing.T) {
 }
 
 func TestLink_SkillNotInStore(t *testing.T) {
-	workDir, cfg, s := testSetup(t)
+	workDir, _, s, agents := testSetup(t)
 
-	_, err := Link(workDir, "nonexistent", cfg, s)
+	_, err := Link(workDir, "nonexistent", agents, s)
 	if err == nil {
 		t.Error("expected error when linking nonexistent skill")
 	}

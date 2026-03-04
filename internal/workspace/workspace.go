@@ -24,8 +24,23 @@ type LinkedSkill struct {
 	IsBroken  bool
 }
 
-// Link creates symlinks for a skill from the store into all enabled agent directories.
-func Link(workspaceRoot string, skillName string, cfg config.Config, s *store.Store) ([]LinkedSkill, error) {
+// DetectAgents returns enabled agents that have a config directory in the workspace.
+// For example, if .claude/ exists, the claude agent is detected.
+func DetectAgents(workspaceRoot string, cfg config.Config) []agent.Agent {
+	var detected []agent.Agent
+	for _, a := range agent.EnabledAgents(cfg) {
+		// Check for the agent's parent directory (e.g. ".claude" from ".claude/skills")
+		parts := strings.SplitN(a.SkillPath, "/", 2)
+		agentDir := filepath.Join(workspaceRoot, parts[0])
+		if _, err := os.Stat(agentDir); err == nil {
+			detected = append(detected, a)
+		}
+	}
+	return detected
+}
+
+// Link creates symlinks for a skill from the store into the specified agent directories.
+func Link(workspaceRoot string, skillName string, agents []agent.Agent, s *store.Store) ([]LinkedSkill, error) {
 	// Find the skill in the store
 	storePath := findSkillInStore(skillName, s)
 	if storePath == "" {
@@ -33,7 +48,6 @@ func Link(workspaceRoot string, skillName string, cfg config.Config, s *store.St
 	}
 
 	fullStorePath := filepath.Join(s.Root, storePath)
-	agents := agent.EnabledAgents(cfg)
 	var linked []LinkedSkill
 
 	for _, a := range agents {

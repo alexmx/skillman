@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/alexmx/skillman/internal/agent"
 	"github.com/alexmx/skillman/internal/config"
 	"github.com/alexmx/skillman/internal/registry"
 	"github.com/alexmx/skillman/internal/store"
@@ -11,8 +12,6 @@ import (
 	"github.com/alexmx/skillman/internal/workspace"
 	"github.com/spf13/cobra"
 )
-
-var linkSave bool
 
 var linkCmd = &cobra.Command{
 	Use:   "link [skill-names...]",
@@ -35,9 +34,9 @@ var linkCmd = &cobra.Command{
 			return err
 		}
 
+		// Pick skills
 		names := args
 		if len(names) == 0 {
-			// Show picker with installed skills
 			if len(reg.Skills) == 0 {
 				return fmt.Errorf("no skills installed. Run 'skillman install' first")
 			}
@@ -49,7 +48,7 @@ var linkCmd = &cobra.Command{
 				skillDescs[i] = e.Source
 			}
 
-			indices, err := tui.PickSkills(skillNames, skillDescs)
+			indices, err := tui.PickSkills("Select skills to link from store", skillNames, skillDescs)
 			if err != nil {
 				return err
 			}
@@ -62,8 +61,18 @@ var linkCmd = &cobra.Command{
 			}
 		}
 
+		// Pick agents — detect which ones exist in the workspace, prompt to confirm
+		agents, err := pickAgents(wd, cfg)
+		if err != nil {
+			return err
+		}
+		if len(agents) == 0 {
+			fmt.Println("No agents selected.")
+			return nil
+		}
+
 		for _, name := range names {
-			linked, err := workspace.Link(wd, name, cfg, s)
+			linked, err := workspace.Link(wd, name, agents, s)
 			if err != nil {
 				return fmt.Errorf("linking %s: %w", name, err)
 			}
@@ -72,18 +81,16 @@ var linkCmd = &cobra.Command{
 				fmt.Printf("Linked %s -> %s (%s)\n", l.Name, l.Agent, l.LinkPath)
 			}
 
-			if linkSave {
-				entry := reg.Find(name)
-				ref := name
-				if entry != nil && entry.Source != "local" {
-					ref = entry.Source
-					if entry.Ref != "" {
-						ref += "@" + entry.Ref
-					}
+			entry := reg.Find(name)
+			ref := name
+			if entry != nil && entry.Source != "local" {
+				ref = entry.Source
+				if entry.Ref != "" {
+					ref += "@" + entry.Ref
 				}
-				if err := workspace.AddToWorkspaceConfig(wd, ref); err != nil {
-					return fmt.Errorf("updating .skillman.yml: %w", err)
-				}
+			}
+			if err := workspace.AddToWorkspaceConfig(wd, ref); err != nil {
+				return fmt.Errorf("updating .skillman.yml: %w", err)
 			}
 		}
 
@@ -91,7 +98,49 @@ var linkCmd = &cobra.Command{
 	},
 }
 
+func pickAgents(workspaceRoot string, cfg config.Config) ([]agent.Agent, error) {
+	allAgents := agent.EnabledAgents(cfg)
+	detected := workspace.DetectAgents(workspaceRoot, cfg)
+
+	agentNames := make([]string, len(allAgents))
+	agentDescs := make([]string, len(allAgents))
+	for i, a := range allAgents {
+		agentNames[i] = a.Name
+		agentDescs[i] = a.SkillPath
+	}
+
+	// Pre-select detected agents
+	preselected := make(map[int]bool)
+	for i, a := range allAgents {
+		for _, d := range detected {
+			if a.Name == d.Name {
+				preselected[i] = true
+			}
+		}
+	}
+
+	// If all agents are detected, skip the picker
+	if len(detected) == len(allAgents) {
+		return allAgents, nil
+	}
+
+	indices, err := tui.PickSkillsWithPreselection(
+		"Select agents to link for",
+		agentNames,
+		agentDescs,
+		preselected,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var selected []agent.Agent
+	for _, idx := range indices {
+		selected = append(selected, allAgents[idx])
+	}
+	return selected, nil
+}
+
 func init() {
-	linkCmd.Flags().BoolVar(&linkSave, "save", false, "add to .skillman.yml")
 	rootCmd.AddCommand(linkCmd)
 }

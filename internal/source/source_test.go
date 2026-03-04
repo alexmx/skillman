@@ -46,6 +46,23 @@ func TestParseRef_GitHubNoRef(t *testing.T) {
 	}
 }
 
+func TestParseRef_HTTPSPrefix(t *testing.T) {
+	ref := ParseRef("https://github.com/anthropics/skills/pdf@v1.0")
+	if ref.Source != "github.com/anthropics/skills/pdf" {
+		t.Errorf("source = %q, want %q", ref.Source, "github.com/anthropics/skills/pdf")
+	}
+	if ref.Ref != "v1.0" {
+		t.Errorf("ref = %q, want %q", ref.Ref, "v1.0")
+	}
+}
+
+func TestParseRef_GitSuffix(t *testing.T) {
+	ref := ParseRef("https://github.com/anthropics/skills.git")
+	if ref.Source != "github.com/anthropics/skills" {
+		t.Errorf("source = %q, want %q", ref.Source, "github.com/anthropics/skills")
+	}
+}
+
 func TestParseGitHubSource(t *testing.T) {
 	cases := []struct {
 		input   string

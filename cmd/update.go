@@ -63,11 +63,8 @@ var updateCmd = &cobra.Command{
 
 			fmt.Printf("Updating %q...\n", entry.Name)
 
-			results, cleanup, err := source.FetchGitHub(
-				fmt.Sprintf("github.com/%s/%s/%s", owner, repo, entry.Name),
-				"", // latest
-				true,
-			)
+			repoSource := fmt.Sprintf("github.com/%s/%s", owner, repo)
+			result, cleanup, err := source.FetchGitHubDirect(repoSource, entry.Name, "")
 			if err != nil {
 				return fmt.Errorf("fetching %s: %w", entry.Name, err)
 			}
@@ -75,12 +72,6 @@ var updateCmd = &cobra.Command{
 				defer cleanup()
 			}
 
-			if len(results) == 0 {
-				fmt.Printf("No update found for %q.\n", entry.Name)
-				continue
-			}
-
-			result := results[0]
 			if result.CommitSHA == entry.CommitSHA {
 				fmt.Printf("Skill %q is already up to date (%s).\n", entry.Name, entry.CommitSHA[:8])
 				continue
