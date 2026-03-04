@@ -59,7 +59,7 @@ func (r *Registry) Save(cfg config.Config) error {
 
 func (r *Registry) Add(entry Entry) {
 	for i, e := range r.Skills {
-		if e.Name == entry.Name && e.Source == entry.Source {
+		if e.Name == entry.Name {
 			r.Skills[i] = entry
 			return
 		}

@@ -90,25 +90,19 @@ func Load() (Config, error) {
 	}
 
 	for name, agentCfg := range fileCfg.Agents {
-		cfg.Agents[name] = agentCfg
+		existing, ok := cfg.Agents[name]
+		if !ok {
+			cfg.Agents[name] = agentCfg
+			continue
+		}
+		existing.Enabled = agentCfg.Enabled
+		if agentCfg.SkillPath != "" {
+			existing.SkillPath = agentCfg.SkillPath
+		}
+		cfg.Agents[name] = existing
 	}
 
 	return cfg, nil
-}
-
-func Save(cfg Config) error {
-	dir := ConfigDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-
-	f, err := os.Create(ConfigPath())
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	return toml.NewEncoder(f).Encode(cfg)
 }
 
 func (c Config) ResolvedStorePath() string {

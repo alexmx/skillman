@@ -35,7 +35,7 @@ var statusCmd = &cobra.Command{
 		// Workspace info
 		wd, err := os.Getwd()
 		if err != nil {
-			return nil
+			return err
 		}
 
 		s := store.New(cfg)
@@ -46,7 +46,7 @@ var statusCmd = &cobra.Command{
 		// .skillman.yml
 		wc, err := workspace.LoadWorkspaceConfig(wd)
 		if err != nil {
-			return nil
+			return err
 		}
 		if wc != nil && len(wc.Skills) > 0 {
 			fmt.Printf("  Declared: %d skills in .skillman.yml\n", len(wc.Skills))
@@ -58,7 +58,7 @@ var statusCmd = &cobra.Command{
 		// Linked skills
 		linked, err := workspace.Status(wd, cfg, s)
 		if err != nil {
-			return nil
+			return err
 		}
 
 		if len(linked) == 0 {

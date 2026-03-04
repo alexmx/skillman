@@ -137,24 +137,38 @@ func installGitHub(ref source.ParsedRef, s *store.Store, reg *registry.Registry,
 	}
 
 	for _, result := range results {
-		owner, repo, _, _ := source.ParseGitHubSource(result.Source)
+		// Warn if replacing a skill from a different source
+		if existing := reg.Find(result.Name); existing != nil && existing.Source != result.Source {
+			yes, err := tui.Confirm(fmt.Sprintf("Skill %q is already installed from %s. Replace with %s?", result.Name, existing.Source, result.Source))
+			if err != nil {
+				return err
+			}
+			if !yes {
+				fmt.Printf("Skipping %q.\n", result.Name)
+				continue
+			}
+		}
+
+		owner, repo, _, err := source.ParseGitHubSource(result.Source)
+		if err != nil {
+			return fmt.Errorf("parsing source for %q: %w", result.Name, err)
+		}
 		storePath := s.GitHubPath(owner, repo, result.Name)
 
 		if err := store.CopyDir(result.SourceDir, storePath); err != nil {
 			return fmt.Errorf("copying skill %q to store: %w", result.Name, err)
 		}
 
-		sourceID := fmt.Sprintf("github.com/%s/%s/%s", owner, repo, result.Name)
 		reg.Add(registry.Entry{
 			Name:        result.Name,
-			Source:      sourceID,
+			Source:      result.Source,
 			Ref:         result.Ref,
 			CommitSHA:   result.CommitSHA,
 			StorePath:   fmt.Sprintf("github.com/%s/%s/%s", owner, repo, result.Name),
 			InstalledAt: time.Now(),
 		})
 
-		fmt.Printf("Installed %q from %s\n", result.Name, sourceID)
+		fmt.Printf("Installed %q from %s\n", result.Name, result.Source)
 	}
 
 	if err := reg.Save(cfg); err != nil {

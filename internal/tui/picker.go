@@ -140,7 +140,11 @@ func (m pickerModel) updatePick(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cursor++
 		}
 	case " ":
-		m.selected[m.cursor] = !m.selected[m.cursor]
+		if m.selected[m.cursor] {
+			delete(m.selected, m.cursor)
+		} else {
+			m.selected[m.cursor] = true
+		}
 	case "a":
 		allSelected := len(m.selected) == len(m.items)
 		if allSelected {

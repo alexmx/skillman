@@ -24,6 +24,9 @@ var updateCmd = &cobra.Command{
 		}
 
 		s := store.New(cfg)
+		if err := s.Init(); err != nil {
+			return err
+		}
 		reg, err := registry.Load(cfg)
 		if err != nil {
 			return err
@@ -50,56 +53,69 @@ var updateCmd = &cobra.Command{
 		}
 
 		for _, entry := range entries {
-			if entry.Local {
-				fmt.Printf("Skipping %q (local skill)\n", entry.Name)
-				continue
-			}
-
-			owner, repo, _, err := source.ParseGitHubSource(entry.Source)
-			if err != nil {
-				fmt.Printf("Skipping %q: %v\n", entry.Name, err)
-				continue
-			}
-
-			fmt.Printf("Updating %q...\n", entry.Name)
-
-			repoSource := fmt.Sprintf("github.com/%s/%s", owner, repo)
-			result, cleanup, err := source.FetchGitHubDirect(repoSource, entry.Name, "")
-			if err != nil {
-				return fmt.Errorf("fetching %s: %w", entry.Name, err)
-			}
-			if cleanup != nil {
-				defer cleanup()
-			}
-
-			if result.CommitSHA == entry.CommitSHA {
-				fmt.Printf("Skill %q is already up to date (%s).\n", entry.Name, entry.CommitSHA[:8])
-				continue
-			}
-
-			yes, err := tui.Confirm(fmt.Sprintf("Update %s from %s to %s?", entry.Name, entry.CommitSHA[:8], result.CommitSHA[:8]))
-			if err != nil {
+			if err := updateEntry(entry, s); err != nil {
 				return err
 			}
-			if !yes {
-				fmt.Println("Skipped.")
-				continue
-			}
-
-			storePath := s.GitHubPath(owner, repo, result.Name)
-			if err := store.CopyDir(result.SourceDir, storePath); err != nil {
-				return fmt.Errorf("copying skill: %w", err)
-			}
-
-			entry.Ref = result.Ref
-			entry.CommitSHA = result.CommitSHA
-			entry.InstalledAt = time.Now()
-
-			fmt.Printf("Updated %q to %s.\n", entry.Name, result.CommitSHA[:8])
 		}
 
 		return reg.Save(cfg)
 	},
+}
+
+func updateEntry(entry *registry.Entry, s *store.Store) error {
+	if entry.Local {
+		fmt.Printf("Skipping %q (local skill)\n", entry.Name)
+		return nil
+	}
+
+	owner, repo, _, err := source.ParseGitHubSource(entry.Source)
+	if err != nil {
+		fmt.Printf("Skipping %q: %v\n", entry.Name, err)
+		return nil
+	}
+
+	fmt.Printf("Updating %q...\n", entry.Name)
+
+	result, cleanup, err := source.FetchGitHubDirect(entry.Source, entry.Name, "")
+	if err != nil {
+		return fmt.Errorf("fetching %s: %w", entry.Name, err)
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	if result.CommitSHA == entry.CommitSHA {
+		fmt.Printf("Skill %q is already up to date (%s).\n", entry.Name, shortSHA(entry.CommitSHA))
+		return nil
+	}
+
+	yes, err := tui.Confirm(fmt.Sprintf("Update %s from %s to %s?", entry.Name, shortSHA(entry.CommitSHA), shortSHA(result.CommitSHA)))
+	if err != nil {
+		return err
+	}
+	if !yes {
+		fmt.Println("Skipped.")
+		return nil
+	}
+
+	storePath := s.GitHubPath(owner, repo, result.Name)
+	if err := store.CopyDir(result.SourceDir, storePath); err != nil {
+		return fmt.Errorf("copying skill: %w", err)
+	}
+
+	entry.Ref = result.Ref
+	entry.CommitSHA = result.CommitSHA
+	entry.InstalledAt = time.Now()
+
+	fmt.Printf("Updated %q to %s.\n", entry.Name, shortSHA(result.CommitSHA))
+	return nil
+}
+
+func shortSHA(sha string) string {
+	if len(sha) > 8 {
+		return sha[:8]
+	}
+	return sha
 }
 
 func init() {

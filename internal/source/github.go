@@ -49,8 +49,14 @@ func cloneRepo(source, ref string) (*cloneResult, func(), error) {
 
 	r, err := git.PlainClone(tmpDir, false, cloneOpts)
 	if err != nil {
-		// If tag clone fails, try as branch
+		// If tag clone fails, try as branch with a fresh tmpDir
 		if ref != "" {
+			os.RemoveAll(tmpDir)
+			tmpDir, err = os.MkdirTemp("", "skillman-*")
+			if err != nil {
+				return nil, nil, fmt.Errorf("creating temp dir: %w", err)
+			}
+			cleanup = func() { os.RemoveAll(tmpDir) }
 			cloneOpts.ReferenceName = plumbing.NewBranchReferenceName(ref)
 			r, err = git.PlainClone(tmpDir, false, cloneOpts)
 		}
@@ -137,7 +143,7 @@ func FetchGitHub(source, ref string) (results []FetchResult, cleanup func(), err
 		results = append(results, FetchResult{
 			Name:      s.Frontmatter.Name,
 			SourceDir: s.Dir,
-			Source:    fmt.Sprintf("github.com/%s/%s/%s", cr.owner, cr.repo, s.Frontmatter.Name),
+			Source:    fmt.Sprintf("github.com/%s/%s", cr.owner, cr.repo),
 			Ref:       cr.ref,
 			CommitSHA: cr.commitSHA,
 		})
@@ -166,7 +172,7 @@ func FetchGitHubDirect(repoSource, skillName, ref string) (*FetchResult, func(),
 			return &FetchResult{
 				Name:      s.Frontmatter.Name,
 				SourceDir: s.Dir,
-				Source:    fmt.Sprintf("github.com/%s/%s/%s", cr.owner, cr.repo, s.Frontmatter.Name),
+				Source:    fmt.Sprintf("github.com/%s/%s", cr.owner, cr.repo),
 				Ref:       cr.ref,
 				CommitSHA: cr.commitSHA,
 			}, cleanup, nil
