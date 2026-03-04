@@ -124,7 +124,8 @@ func FetchGitHub(source, ref string) (results []FetchResult, cleanup func(), err
 		descs[i] = s.Frontmatter.Description
 		dirs[i] = s.Dir
 	}
-	indices, err := tui.PickSkillsWithOptions("Select skills to install", tui.SecurityWarning(), names, descs, nil, dirs)
+	repoSource := fmt.Sprintf("github.com/%s/%s", cr.owner, cr.repo)
+	indices, err := tui.PickSkillsWithOptions("Select skills to install", repoSource, tui.SecurityWarning(), names, descs, nil, dirs)
 	if err != nil {
 		cleanup()
 		return nil, nil, err

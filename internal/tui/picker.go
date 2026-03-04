@@ -20,6 +20,7 @@ const (
 
 type pickerModel struct {
 	title    string
+	subtitle string
 	warning  string
 	items    []pickerItem
 	cursor   int
@@ -41,14 +42,14 @@ type pickerItem struct {
 }
 
 func PickSkills(title string, names, descriptions []string) ([]int, error) {
-	return PickSkillsWithOptions(title, "", names, descriptions, nil, nil)
+	return PickSkillsWithOptions(title, "", "", names, descriptions, nil, nil)
 }
 
 func PickSkillsWithPreselection(title string, names, descriptions []string, preselected map[int]bool) ([]int, error) {
-	return PickSkillsWithOptions(title, "", names, descriptions, preselected, nil)
+	return PickSkillsWithOptions(title, "", "", names, descriptions, preselected, nil)
 }
 
-func PickSkillsWithOptions(title, warning string, names, descriptions []string, preselected map[int]bool, skillDirs []string) ([]int, error) {
+func PickSkillsWithOptions(title, subtitle, warning string, names, descriptions []string, preselected map[int]bool, skillDirs []string) ([]int, error) {
 	items := make([]pickerItem, len(names))
 	for i := range names {
 		desc := ""
@@ -69,6 +70,7 @@ func PickSkillsWithOptions(title, warning string, names, descriptions []string, 
 
 	m := pickerModel{
 		title:    title,
+		subtitle: subtitle,
 		warning:  warning,
 		items:    items,
 		selected: selected,
@@ -194,7 +196,7 @@ var (
 	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99"))
 	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 	reviewTitleStyle = lipgloss.NewStyle().
 				Bold(true).
@@ -202,7 +204,7 @@ var (
 				Background(lipgloss.Color("99")).
 				Padding(0, 1)
 	reviewFooterStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("240"))
+				Foreground(lipgloss.Color("245"))
 )
 
 func (m pickerModel) View() string {
@@ -226,6 +228,10 @@ func (m pickerModel) viewPick() string {
 
 	b.WriteString(titleStyle.Render(m.title))
 	b.WriteString("\n")
+	if m.subtitle != "" {
+		b.WriteString(dimStyle.Render(m.subtitle))
+		b.WriteString("\n")
+	}
 
 	hasReviewable := false
 	for _, item := range m.items {
@@ -267,7 +273,7 @@ func (m pickerModel) viewPick() string {
 		b.WriteString(fmt.Sprintf("%s%s %s%s\n", cursor, check, nameRendered, desc))
 	}
 
-	return b.String()
+	return lipgloss.NewStyle().PaddingLeft(1).Render(b.String())
 }
 
 func (m pickerModel) viewReview() string {
@@ -278,7 +284,8 @@ func (m pickerModel) viewReview() string {
 	pct := m.viewport.ScrollPercent() * 100
 	scrollInfo := reviewFooterStyle.Render(fmt.Sprintf("  %.0f%%", pct))
 
-	return header + "\n" + m.viewport.View() + "\n" + footer + scrollInfo
+	view := header + "\n" + m.viewport.View() + "\n" + footer + scrollInfo
+	return lipgloss.NewStyle().PaddingLeft(1).Render(view)
 }
 
 func loadSkillContent(dir string) string {
