@@ -1,0 +1,173 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.skillman-version']
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Read version from .skillman-version
+        id: version
+        run: |
+          VERSION=$(cat .skillman-version)
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version from .skillman-version: $VERSION"
+
+      - name: Check if tag already exists
+        id: check_tag
+        run: |
+          if git rev-parse "v${{ steps.version.outputs.VERSION }}" >/dev/null 2>&1; then
+            echo "Tag v${{ steps.version.outputs.VERSION }} already exists, skipping release"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tag v${{ steps.version.outputs.VERSION }} does not exist, proceeding with release"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run tests
+        if: steps.check_tag.outputs.exists == 'false'
+        run: go test ./...
+
+      - name: Build binaries
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          LDFLAGS="-X github.com/alexmx/skillman/internal/version.Version=${VERSION}"
+          mkdir -p dist
+
+          # macOS arm64
+          GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/skillman-darwin-arm64 .
+          # macOS amd64
+          GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/skillman-darwin-amd64 .
+          # Linux arm64
+          GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/skillman-linux-arm64 .
+          # Linux amd64
+          GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/skillman-linux-amd64 .
+
+          ls -lh dist/
+
+      - name: Create macOS universal binary
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          # For macOS we ship a universal binary via lipo (not available on Linux runners)
+          # Instead, ship separate arch binaries and let Homebrew pick the right one
+          echo "Binaries built for darwin-arm64 and darwin-amd64"
+
+      - name: Package binaries
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          cd dist
+          for bin in skillman-*; do
+            zip "${bin}-${VERSION}.zip" "$bin"
+            shasum -a 256 "${bin}-${VERSION}.zip" >> checksums.txt
+          done
+          cat checksums.txt
+
+      - name: Verify version in binary
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          EXPECTED_VERSION="${{ steps.version.outputs.VERSION }}"
+          ACTUAL_VERSION=$(dist/skillman-linux-amd64 --version)
+          echo "Expected: $EXPECTED_VERSION"
+          echo "Actual: $ACTUAL_VERSION"
+          if [ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "Version mismatch!"
+            exit 1
+          fi
+          echo "Version verified: $ACTUAL_VERSION"
+
+      - name: Create git tag
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ steps.version.outputs.VERSION }}" -m "Release v${{ steps.version.outputs.VERSION }}"
+          git push origin "v${{ steps.version.outputs.VERSION }}"
+
+      - name: Create GitHub Release
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          name: Release v${{ steps.version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist/skillman-*-*.zip
+            dist/checksums.txt
+
+      - name: Update Homebrew formula
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          SHA256_ARM64=$(shasum -a 256 dist/skillman-darwin-arm64-${VERSION}.zip | awk '{print $1}')
+          SHA256_AMD64=$(shasum -a 256 dist/skillman-darwin-amd64-${VERSION}.zip | awk '{print $1}')
+          echo "ARM64 SHA256: $SHA256_ARM64"
+          echo "AMD64 SHA256: $SHA256_AMD64"
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/alexmx/homebrew-tools.git" /tmp/homebrew-tools
+          cd /tmp/homebrew-tools
+
+          cat > Formula/skillman.rb << FORMULA
+          class Skillman < Formula
+            desc "A package manager for Agent Skills"
+            homepage "https://github.com/alexmx/skillman"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/alexmx/skillman/releases/download/v${VERSION}/skillman-darwin-arm64-${VERSION}.zip"
+                sha256 "${SHA256_ARM64}"
+              else
+                url "https://github.com/alexmx/skillman/releases/download/v${VERSION}/skillman-darwin-amd64-${VERSION}.zip"
+                sha256 "${SHA256_AMD64}"
+              end
+            end
+
+            def install
+              binary = Dir["skillman-*"].first
+              mv binary, "skillman"
+              bin.install "skillman"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/skillman --version").strip
+            end
+          end
+          FORMULA
+
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' Formula/skillman.rb
+
+          echo "Updated Formula/skillman.rb:"
+          cat Formula/skillman.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/skillman.rb
+          git commit -m "Update skillman to v${VERSION}"
+          git push
