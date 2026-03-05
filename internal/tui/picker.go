@@ -193,15 +193,17 @@ func (m pickerModel) updateReview(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 var (
-	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("99"))
+	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("141"))
 	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	hintKeyStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
+	hintStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 	reviewTitleStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("0")).
-				Background(lipgloss.Color("99")).
+				Background(lipgloss.Color("141")).
 				Padding(0, 1)
 	reviewFooterStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("245"))
@@ -241,11 +243,22 @@ func (m pickerModel) viewPick() string {
 		}
 	}
 
-	hint := "  space: toggle  a: all  enter: confirm  q: cancel"
-	if hasReviewable {
-		hint = "  space: toggle  a: all  r: review  enter: confirm  q: cancel"
+	hints := [][]string{
+		{"space", "toggle"},
+		{"a", "all"},
 	}
-	b.WriteString(dimStyle.Render(hint))
+	if hasReviewable {
+		hints = append(hints, []string{"r", "review"})
+	}
+	hints = append(hints, []string{"enter", "confirm"}, []string{"q", "cancel"})
+	b.WriteString("  ")
+	for i, h := range hints {
+		if i > 0 {
+			b.WriteString("  ")
+		}
+		b.WriteString(hintKeyStyle.Render(h[0]))
+		b.WriteString(hintStyle.Render(": " + h[1]))
+	}
 	b.WriteString("\n\n")
 
 	for i, item := range m.items {
