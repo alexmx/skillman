@@ -25,7 +25,7 @@ func AlertBox(title, message string) string {
 
 func SecurityWarning() string {
 	return AlertBox(" ! Warning ",
-		"Skills contain instructions that are injected into your AI agent's\n"+
-			"context. Only install skills from sources you trust. Malicious\n"+
-			"skills could lead to prompt injection attacks.")
+		"Skills are injected directly into your AI agent's context and can\n"+
+			"influence its behavior. Review each skill carefully before installing.\n"+
+			"Malicious skills could lead to prompt injection attacks.")
 }

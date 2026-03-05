@@ -1,10 +1,10 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type confirmModel struct {
@@ -47,9 +47,17 @@ func (m confirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+var (
+	confirmMsgStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("141"))
+	confirmKeyStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
+	confirmDimStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+)
+
 func (m confirmModel) View() string {
 	if m.done {
 		return ""
 	}
-	return fmt.Sprintf("%s [y/N] ", m.message)
+	msg := confirmMsgStyle.Render(m.message)
+	hint := confirmDimStyle.Render(" [") + confirmKeyStyle.Render("y") + confirmDimStyle.Render("/") + confirmKeyStyle.Render("N") + confirmDimStyle.Render("] ")
+	return " " + msg + hint
 }

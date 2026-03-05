@@ -107,7 +107,7 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		if m.mode == modeReview {
 			m.viewport.Width = msg.Width
-			m.viewport.Height = msg.Height - 4 // room for header/footer
+			m.viewport.Height = msg.Height - 6 // header + 2 dividers + footer + padding
 		}
 		return m, nil
 
@@ -160,7 +160,7 @@ func (m pickerModel) updatePick(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		item := m.items[m.cursor]
 		if item.skillDir != "" {
 			content := loadSkillContent(item.skillDir)
-			height := m.height - 4
+			height := m.height - 6
 			if height < 10 {
 				height = 20
 			}
@@ -196,17 +196,26 @@ var (
 	titleStyle    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("141"))
 	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+	activeName    = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("255"))
 	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	bracketStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	checkStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	hintKeyStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
 	hintStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	counterStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
 	reviewTitleStyle = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(lipgloss.Color("0")).
 				Background(lipgloss.Color("141")).
 				Padding(0, 1)
-	reviewFooterStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("245"))
+	reviewWarnStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("0")).
+				Background(lipgloss.Color("11")).
+				Padding(0, 1)
+	reviewDivider = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("238"))
 )
 
 func (m pickerModel) View() string {
@@ -235,6 +244,60 @@ func (m pickerModel) viewPick() string {
 		b.WriteString("\n")
 	}
 
+	// Selection counter
+	count := len(m.selected)
+	total := len(m.items)
+	b.WriteString(counterStyle.Render(fmt.Sprintf("  %d of %d selected", count, total)))
+	b.WriteString("\n\n")
+
+	// Compute max description width based on terminal width
+	// Layout: padding(1) + cursor(2) + checkbox(3) + space(1) + name + " - " + desc
+	maxDescWidth := 60
+	if m.width > 0 {
+		longestName := 0
+		for _, item := range m.items {
+			if len(item.name) > longestName {
+				longestName = len(item.name)
+			}
+		}
+		// 1 padding + 2 cursor + 3 checkbox + 1 space + name + 3 " - " + desc
+		available := m.width - 1 - 2 - 3 - 1 - longestName - 3
+		if available > 20 {
+			maxDescWidth = available
+		}
+	}
+
+	for i, item := range m.items {
+		cursor := "  "
+		if i == m.cursor {
+			cursor = cursorStyle.Render("> ")
+		}
+
+		check := bracketStyle.Render("[") + " " + bracketStyle.Render("]")
+		nameRendered := item.name
+		if i == m.cursor && !m.selected[i] {
+			nameRendered = activeName.Render(item.name)
+		}
+		if m.selected[i] {
+			check = bracketStyle.Render("[") + checkStyle.Render("x") + bracketStyle.Render("]")
+			nameRendered = selectedStyle.Render(item.name)
+		}
+
+		desc := ""
+		if item.desc != "" {
+			d := item.desc
+			if len(d) > maxDescWidth {
+				d = d[:maxDescWidth-3] + "..."
+			}
+			desc = dimStyle.Render(fmt.Sprintf(" - %s", d))
+		}
+
+		b.WriteString(fmt.Sprintf("%s%s %s%s\n", cursor, check, nameRendered, desc))
+	}
+
+	b.WriteString("\n")
+
+	// Hints bar
 	hasReviewable := false
 	for _, item := range m.items {
 		if item.skillDir != "" {
@@ -259,45 +322,40 @@ func (m pickerModel) viewPick() string {
 		b.WriteString(hintKeyStyle.Render(h[0]))
 		b.WriteString(hintStyle.Render(": " + h[1]))
 	}
-	b.WriteString("\n\n")
-
-	for i, item := range m.items {
-		cursor := "  "
-		if i == m.cursor {
-			cursor = cursorStyle.Render("> ")
-		}
-
-		check := "[ ]"
-		nameRendered := item.name
-		if m.selected[i] {
-			check = selectedStyle.Render("[x]")
-			nameRendered = selectedStyle.Render(item.name)
-		}
-
-		desc := ""
-		if item.desc != "" {
-			d := item.desc
-			if len(d) > 60 {
-				d = d[:57] + "..."
-			}
-			desc = dimStyle.Render(fmt.Sprintf(" - %s", d))
-		}
-
-		b.WriteString(fmt.Sprintf("%s%s %s%s\n", cursor, check, nameRendered, desc))
-	}
+	b.WriteString("\n")
 
 	return lipgloss.NewStyle().PaddingLeft(1).Render(b.String())
 }
 
 func (m pickerModel) viewReview() string {
 	item := m.items[m.cursor]
-	header := reviewTitleStyle.Render(fmt.Sprintf(" %s - SKILL.md ", item.name))
-	footer := reviewFooterStyle.Render("  r/esc: back  arrows/j/k: scroll  ctrl+c: quit")
+	header := reviewTitleStyle.Render(fmt.Sprintf(" %s - SKILL.md ", item.name)) + " " +
+		reviewWarnStyle.Render(" ! Review carefully before installing ")
 
+	// Divider line
+	divWidth := m.width - 2
+	if divWidth < 40 {
+		divWidth = 40
+	}
+	divider := reviewDivider.Render(strings.Repeat("─", divWidth))
+
+	// Scroll percentage
 	pct := m.viewport.ScrollPercent() * 100
-	scrollInfo := reviewFooterStyle.Render(fmt.Sprintf("  %.0f%%", pct))
+	scrollInfo := counterStyle.Render(fmt.Sprintf("%.0f%%", pct))
 
-	view := header + "\n" + m.viewport.View() + "\n" + footer + scrollInfo
+	// Consistent hint bar
+	var hints strings.Builder
+	for i, h := range [][]string{{"r/esc", "back"}, {"j/k", "scroll"}, {"ctrl+c", "quit"}} {
+		if i > 0 {
+			hints.WriteString("  ")
+		}
+		hints.WriteString(hintKeyStyle.Render(h[0]))
+		hints.WriteString(hintStyle.Render(": " + h[1]))
+	}
+
+	footer := "  " + hints.String() + "  " + scrollInfo
+
+	view := header + "\n" + divider + "\n" + m.viewport.View() + "\n" + divider + "\n" + footer
 	return lipgloss.NewStyle().PaddingLeft(1).Render(view)
 }
 
