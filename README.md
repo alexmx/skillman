@@ -2,7 +2,7 @@
 
 A package manager for [Agent Skills](https://agentskills.io).
 
-Skillman manages Agent Skills — install from GitHub or local paths into a central store, then link them into any workspace for any supported AI coding agent.
+Skillman manages Agent Skills — install from GitHub or local paths directly into your workspace for any supported AI coding agent.
 
 <p align="center">
 <img width="900" alt="terminal" src="https://github.com/user-attachments/assets/a4cc4bf5-7674-4ff5-a109-9665af9c154b" />
@@ -10,10 +10,9 @@ Skillman manages Agent Skills — install from GitHub or local paths into a cent
 
 ## Features
 
-- **Install** — Fetch skills from GitHub repos or local directories into a central store
-- **Link** — Symlink skills from the store into workspace agent directories
+- **Install** — Fetch skills from GitHub repos or local directories directly into your workspace
 - **Multi-agent** — Supports Claude Code, Cursor, Codex, and GitHub Copilot out of the box
-- **Declarative** — Define skills in `.skillman.yml` and sync across workspaces
+- **Declarative** — `.skillman/config.yml` tracks skills with their sources for easy updates
 - **Interactive** — TUI-based skill picker, agent selector, and inline skill review
 
 ## Installation
@@ -35,58 +34,40 @@ mise use --global github:alexmx/skillman
 ### Install a skill from GitHub
 
 ```bash
+cd ~/my-project
 skillman install github.com/anthropics/skills
 ```
 
-An interactive picker lets you choose which skills to install.
+An interactive picker lets you choose which skills to install. Skills are copied into `.skillman/skills/` and symlinked into each agent's skill directory.
 
-### Link skills into your workspace
-
-```bash
-cd ~/my-project
-skillman link
-```
-
-Skillman detects which agents are configured in your workspace and lets you pick which ones to link. The selection is saved to `.skillman.yml`.
-
-### Check workspace status
+### List installed skills
 
 ```bash
-skillman status
+skillman list
 ```
 ```
-Global:
-  Config file:  ~/.config/skillman/config.toml
-  Store path:   ~/.local/share/skillman/store
-  Skills:       3 installed (run 'skillman list' to see all)
+NAME    SOURCE                          REF
+pdf     github.com/anthropics/skills    main@abc123de
+commit  github.com/anthropics/skills    main@abc123de
+```
 
-Workspace:
-  Path: /Users/you/my-project
-  Declared: 2 skills in .skillman.yml
-  Linked: 2 skills
-    pdf                  -> claude, cursor (~/.local/share/skillman/store/github.com/anthropics/skills/pdf)
-    commit               -> claude (~/.local/share/skillman/store/github.com/anthropics/skills/commit)
+### Configure agents
+
+```bash
+skillman config
 ```
+
+Shows your workspace skills and which agents they're linked to, then lets you toggle agents on or off interactively.
 
 ## Command Reference
 
-### Managing Skills
-
 | Command | Description | Example |
 |---------|-------------|---------|
-| `install <source>` | Install skills from GitHub or a local path | `skillman install github.com/org/repo` |
-| `list` | List all installed skills | `skillman list` |
+| `install <source>` | Install skills into the current workspace | `skillman install github.com/org/repo` |
+| `remove [names...]` | Remove skills from the current workspace | `skillman rm pdf` |
 | `update [name]` | Update a skill to the latest version | `skillman update pdf` |
-| `remove <name>` | Remove a skill from the store | `skillman remove pdf` |
-
-### Workspace Operations
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `link [names...]` | Link skills into the current workspace | `skillman link pdf commit` |
-| `unlink [names...]` | Unlink skills from the current workspace | `skillman unlink pdf` |
-| `sync` | Sync workspace symlinks with `.skillman.yml` | `skillman sync` |
-| `status` | Show status for the current workspace | `skillman status` |
+| `list` | List skills in the current workspace | `skillman ls` |
+| `config` | View and configure agent symlinks | `skillman config` |
 
 ### Install Sources
 
@@ -115,54 +96,44 @@ URL formats with `https://` and trailing `.git` are normalized automatically.
 | Codex | `.codex/skills/` |
 | GitHub Copilot | `.github/skills/` |
 
-When linking, Skillman detects which agents are configured in your workspace and prompts you to select which ones to link to.
+## Workspace Layout
 
-## Configuration
-
-Skillman follows the [XDG Base Directory](https://specifications.freedesktop.org/basedir-spec/latest/) specification:
-
-- **Config:** `~/.config/skillman/config.toml`
-- **Store:** `~/.local/share/skillman/store`
-- **Registry:** `~/.local/share/skillman/store/registry.json`
-
-Override paths with `XDG_CONFIG_HOME` and `XDG_DATA_HOME` environment variables, or set `store_path` in `config.toml`.
-
-### config.toml
-
-```toml
-# Override the default store path
-store_path = "/custom/path/to/store"
-
-# Configure agents
-[agents.claude]
-enabled = true
-skill_path = ".claude/skills"
-
-[agents.cursor]
-enabled = true
-skill_path = ".cursor/skills"
+```
+my-project/
+├── .skillman/                          # committed to git
+│   ├── config.yml                      # tracks skills with sources
+│   └── skills/
+│       ├── pdf/
+│       │   └── SKILL.md
+│       └── commit/
+│           └── SKILL.md
+├── .claude/skills/
+│   ├── pdf -> ../../.skillman/skills/pdf       # relative symlink
+│   └── commit -> ../../.skillman/skills/commit
+└── .cursor/skills/
+    ├── pdf -> ../../.skillman/skills/pdf
+    └── commit -> ../../.skillman/skills/commit
 ```
 
-## Workspace Config
-
-Create a `.skillman.yml` in your project root to declare which skills should be linked:
+### config.yml
 
 ```yaml
 skills:
-  - pdf
-  - commit
+  - name: pdf
+    source: github.com/anthropics/skills
+    ref: main
+    commit: abc123def456
+  - name: my-skill
+    source: local
+    path: /path/to/my-skill
 ```
-
-Run `skillman sync` to ensure workspace symlinks match the declared list. The `link` command automatically updates this file.
 
 ## How It Works
 
-1. **Install** clones a GitHub repo (or reads a local path), discovers `SKILL.md` files, and copies selected skills into the central store at `~/.local/share/skillman/store/`
-2. **Link** creates symlinks from the store into your workspace's agent skill directories (e.g., `.claude/skills/pdf` -> `~/.local/share/skillman/store/github.com/org/repo/pdf`)
-3. **Update** re-clones the source repo, compares commit SHAs, and replaces the stored copy if newer
-4. **Sync** reads `.skillman.yml` and reconciles symlinks — linking declared skills and removing stale ones
-
-Skills are stored once and shared across all workspaces via symlinks.
+1. **Install** clones a GitHub repo (or reads a local path), discovers `SKILL.md` files, copies selected skills into `.skillman/skills/`, and creates relative symlinks in each agent's skill directory
+2. **Update** re-fetches the skill from its source, overwrites `.skillman/skills/{name}/`, and updates the config — existing symlinks continue to work
+3. **Remove** deletes the skill from `.skillman/skills/`, removes agent symlinks, and cleans up the config
+4. **Config** lets you toggle which agents have symlinks for your skills
 
 ## License
 

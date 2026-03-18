@@ -3,20 +3,18 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"time"
 
-	"github.com/alexmx/skillman/internal/config"
-	"github.com/alexmx/skillman/internal/registry"
+	"github.com/alexmx/skillman/internal/agent"
 	"github.com/alexmx/skillman/internal/source"
-	"github.com/alexmx/skillman/internal/store"
 	"github.com/alexmx/skillman/internal/tui"
+	"github.com/alexmx/skillman/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
 var installCmd = &cobra.Command{
 	Use:   "install <source>",
-	Short: "Install a skill from a local path or GitHub",
-	Long: `Install a skill into the central store.
+	Short: "Install a skill into the current workspace",
+	Long: `Fetch a skill and install it into the current workspace's .skillman/skills/ directory.
 
 Sources:
   ./path/to/skill              Local skill directory
@@ -45,42 +43,24 @@ func init() {
 func runInstall(cmd *cobra.Command, args []string) error {
 	ref := source.ParseRef(args[0])
 
-	cfg, err := config.Load()
+	wd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("loading config: %w", err)
-	}
-
-	s := store.New(cfg)
-	if err := s.Init(); err != nil {
-		return fmt.Errorf("initializing store: %w", err)
-	}
-
-	reg, err := registry.Load(cfg)
-	if err != nil {
-		return fmt.Errorf("loading registry: %w", err)
+		return err
 	}
 
 	if ref.IsLocal {
-		return installLocal(ref, s, reg, cfg)
+		return installLocal(ref, wd)
 	}
-	return installGitHub(ref, s, reg, cfg)
+	return installGitHub(ref, wd)
 }
 
-func installLocal(ref source.ParsedRef, s *store.Store, reg *registry.Registry, cfg config.Config) error {
+func installLocal(ref source.ParsedRef, wd string) error {
 	result, err := source.FetchLocal(ref.Raw)
 	if err != nil {
 		return err
 	}
 
-	// Check if already installed
-	if existing := reg.Find(result.Name); existing != nil && existing.Local {
-		fmt.Printf("Skill %q is already installed (local).\n", result.Name)
-		return nil
-	}
-
-	printSecurityWarning()
-
-	fmt.Printf("\nSkill: %s\n", result.Name)
+	fmt.Printf("Skill: %s\n", result.Name)
 	fmt.Printf("Source: %s\n\n", result.SourceDir)
 
 	yes, err := tui.Confirm("Install this skill?")
@@ -92,38 +72,42 @@ func installLocal(ref source.ParsedRef, s *store.Store, reg *registry.Registry, 
 		return nil
 	}
 
-	// Create symlink in store/local/
-	storePath := s.LocalPath(result.Name)
-	if err := os.MkdirAll(s.LocalPath(""), 0o755); err != nil {
+	agents, err := pickAgents(wd)
+	if err != nil {
 		return err
 	}
-
-	// Remove existing if present
-	os.Remove(storePath)
-
-	if err := os.Symlink(result.SourceDir, storePath); err != nil {
-		return fmt.Errorf("creating symlink: %w", err)
+	if len(agents) == 0 {
+		fmt.Println("No agents selected.")
+		return nil
 	}
 
-	reg.Add(registry.Entry{
-		Name:        result.Name,
-		Source:      result.Source,
-		StorePath:   "local/" + result.Name,
-		Local:       true,
-		InstalledAt: time.Now(),
-	})
-
-	if err := reg.Save(cfg); err != nil {
-		return fmt.Errorf("saving registry: %w", err)
+	if workspace.SkillExistsInWorkspace(wd, result.Name) {
+		fmt.Printf("Skill %q already installed, replacing.\n", result.Name)
 	}
 
-	fmt.Printf("Installed %q from local path.\n", result.Name)
+	installed, err := workspace.Install(wd, result.Name, result.SourceDir, agents)
+	if err != nil {
+		return fmt.Errorf("installing %s: %w", result.Name, err)
+	}
+	for _, ws := range installed {
+		fmt.Printf("Installed %s for %s\n", ws.Name, ws.Agent)
+	}
+
+	if err := workspace.UpsertSkillEntry(wd, workspace.SkillEntry{
+		Name:   result.Name,
+		Source: "local",
+		Path:   result.SourceDir,
+	}); err != nil {
+		return fmt.Errorf("updating config: %w", err)
+	}
+
 	fmt.Println()
 	printSecurityWarning()
 	return nil
 }
 
-func installGitHub(ref source.ParsedRef, s *store.Store, reg *registry.Registry, cfg config.Config) error {
+func installGitHub(ref source.ParsedRef, wd string) error {
+	// Fetch and pick skills first
 	results, cleanup, err := source.FetchGitHub(ref.Source, ref.Ref)
 	if err != nil {
 		return err
@@ -136,48 +120,85 @@ func installGitHub(ref source.ParsedRef, s *store.Store, reg *registry.Registry,
 		return nil
 	}
 
-	for _, result := range results {
-		// Warn if replacing a skill from a different source
-		if existing := reg.Find(result.Name); existing != nil && existing.Source != result.Source {
-			yes, err := tui.Confirm(fmt.Sprintf("Skill %q is already installed from %s. Replace with %s?", result.Name, existing.Source, result.Source))
-			if err != nil {
-				return err
-			}
-			if !yes {
-				fmt.Printf("Skipping %q.\n", result.Name)
-				continue
-			}
-		}
-
-		owner, repo, _, err := source.ParseGitHubSource(result.Source)
-		if err != nil {
-			return fmt.Errorf("parsing source for %q: %w", result.Name, err)
-		}
-		storePath := s.GitHubPath(owner, repo, result.Name)
-
-		if err := store.CopyDir(result.SourceDir, storePath); err != nil {
-			return fmt.Errorf("copying skill %q to store: %w", result.Name, err)
-		}
-
-		reg.Add(registry.Entry{
-			Name:        result.Name,
-			Source:      result.Source,
-			Ref:         result.Ref,
-			CommitSHA:   result.CommitSHA,
-			StorePath:   fmt.Sprintf("github.com/%s/%s/%s", owner, repo, result.Name),
-			InstalledAt: time.Now(),
-		})
-
-		fmt.Printf("Installed %q from %s\n", result.Name, result.Source)
+	// Then pick agents
+	agents, err := pickAgents(wd)
+	if err != nil {
+		return err
+	}
+	if len(agents) == 0 {
+		fmt.Println("No agents selected.")
+		return nil
 	}
 
-	if err := reg.Save(cfg); err != nil {
-		return fmt.Errorf("saving registry: %w", err)
+	for _, result := range results {
+		if workspace.SkillExistsInWorkspace(wd, result.Name) {
+			fmt.Printf("Skill %q already installed, replacing.\n", result.Name)
+		}
+
+		installed, err := workspace.Install(wd, result.Name, result.SourceDir, agents)
+		if err != nil {
+			return fmt.Errorf("installing %s: %w", result.Name, err)
+		}
+		for _, ws := range installed {
+			fmt.Printf("Installed %s for %s\n", ws.Name, ws.Agent)
+		}
+
+		if err := workspace.UpsertSkillEntry(wd, workspace.SkillEntry{
+			Name:   result.Name,
+			Source: result.Source,
+			Ref:    result.Ref,
+			Commit: result.CommitSHA,
+		}); err != nil {
+			return fmt.Errorf("updating config: %w", err)
+		}
 	}
 
 	fmt.Println()
 	printSecurityWarning()
 	return nil
+}
+
+func pickAgents(workspaceRoot string) ([]agent.Agent, error) {
+	allAgents := agent.All()
+	detected := workspace.DetectAgents(workspaceRoot)
+
+	agentNames := make([]string, len(allAgents))
+	agentDescs := make([]string, len(allAgents))
+	for i, a := range allAgents {
+		agentNames[i] = a.Name
+		agentDescs[i] = a.SkillPath
+	}
+
+	// Pre-select detected agents
+	preselected := make(map[int]bool)
+	for i, a := range allAgents {
+		for _, d := range detected {
+			if a.Name == d.Name {
+				preselected[i] = true
+			}
+		}
+	}
+
+	// If all agents are detected, skip the picker
+	if len(detected) == len(allAgents) {
+		return allAgents, nil
+	}
+
+	indices, err := tui.PickSkillsWithPreselection(
+		"Select agents to install for",
+		agentNames,
+		agentDescs,
+		preselected,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var selected []agent.Agent
+	for _, idx := range indices {
+		selected = append(selected, allAgents[idx])
+	}
+	return selected, nil
 }
 
 func printSecurityWarning() {

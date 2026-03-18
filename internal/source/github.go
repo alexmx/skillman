@@ -184,6 +184,41 @@ func FetchGitHubDirect(repoSource, skillName, ref string) (*FetchResult, func(),
 	return nil, nil, fmt.Errorf("skill %q not found in %s/%s", skillName, cr.owner, cr.repo)
 }
 
+// FetchGitHubMultiple clones a repo once and returns results for multiple skill names.
+// Skills not found in the repo are silently skipped.
+func FetchGitHubMultiple(repoSource string, skillNames []string, ref string) ([]FetchResult, func(), error) {
+	cr, cleanup, err := cloneRepo(repoSource, ref)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	skills, err := discoverSkills(cr.tmpDir)
+	if err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("discovering skills: %w", err)
+	}
+
+	wanted := make(map[string]bool, len(skillNames))
+	for _, n := range skillNames {
+		wanted[n] = true
+	}
+
+	var results []FetchResult
+	for _, s := range skills {
+		if wanted[s.Frontmatter.Name] {
+			results = append(results, FetchResult{
+				Name:      s.Frontmatter.Name,
+				SourceDir: s.Dir,
+				Source:    fmt.Sprintf("github.com/%s/%s", cr.owner, cr.repo),
+				Ref:       cr.ref,
+				CommitSHA: cr.commitSHA,
+			})
+		}
+	}
+
+	return results, cleanup, nil
+}
+
 func discoverSkills(root string) ([]*skill.Skill, error) {
 	var skills []*skill.Skill
 

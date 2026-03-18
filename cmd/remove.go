@@ -3,75 +3,76 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
-	"github.com/alexmx/skillman/internal/config"
-	"github.com/alexmx/skillman/internal/registry"
-	"github.com/alexmx/skillman/internal/store"
 	"github.com/alexmx/skillman/internal/tui"
+	"github.com/alexmx/skillman/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
-var removeForce bool
-
 var removeCmd = &cobra.Command{
-	Use:     "remove <skill-name>",
-	Short:   "Remove a skill from the store",
+	Use:     "remove [skill-names...]",
+	Short:   "Remove skills from the current workspace",
 	Aliases: []string{"rm"},
-	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		name := args[0]
-
-		cfg, err := config.Load()
+		wd, err := os.Getwd()
 		if err != nil {
 			return err
 		}
 
-		s := store.New(cfg)
-		reg, err := registry.Load(cfg)
-		if err != nil {
-			return err
-		}
-
-		entry := reg.Find(name)
-		if entry == nil {
-			return fmt.Errorf("skill %q is not installed", name)
-		}
-
-		if !removeForce {
-			yes, err := tui.Confirm(fmt.Sprintf("Remove %q from the store?", name))
+		names := args
+		if len(names) == 0 {
+			wc, err := workspace.LoadWorkspaceConfig(wd)
 			if err != nil {
 				return err
 			}
-			if !yes {
-				fmt.Println("Cancelled.")
+			if wc == nil || len(wc.Skills) == 0 {
+				fmt.Println("No skills in this workspace.")
 				return nil
 			}
-		}
 
-		// Remove from store
-		storePath := filepath.Join(s.Root, entry.StorePath)
-		info, err := os.Lstat(storePath)
-		if err == nil {
-			if info.Mode()&os.ModeSymlink != 0 {
-				os.Remove(storePath)
-			} else {
-				os.RemoveAll(storePath)
+			skillNames := make([]string, len(wc.Skills))
+			skillDescs := make([]string, len(wc.Skills))
+			for i, e := range wc.Skills {
+				skillNames[i] = e.Name
+				skillDescs[i] = e.Source
+			}
+
+			indices, err := tui.PickSkills("Select skills to remove", skillNames, skillDescs)
+			if err != nil {
+				return err
+			}
+			if len(indices) == 0 {
+				fmt.Println("No skills selected.")
+				return nil
+			}
+			for _, idx := range indices {
+				names = append(names, wc.Skills[idx].Name)
 			}
 		}
 
-		// Remove from registry
-		reg.Remove(name)
-		if err := reg.Save(cfg); err != nil {
-			return fmt.Errorf("saving registry: %w", err)
+		for _, name := range names {
+			agents, err := workspace.Remove(wd, name)
+			if err != nil {
+				return fmt.Errorf("removing %s: %w", name, err)
+			}
+
+			if len(agents) == 0 {
+				fmt.Printf("Skill %q was not in this workspace.\n", name)
+			} else {
+				for _, a := range agents {
+					fmt.Printf("Removed %s from %s\n", name, a)
+				}
+			}
+
+			if err := workspace.RemoveSkillEntry(wd, name); err != nil {
+				return fmt.Errorf("updating config: %w", err)
+			}
 		}
 
-		fmt.Printf("Removed %q.\n", name)
 		return nil
 	},
 }
 
 func init() {
-	removeCmd.Flags().BoolVarP(&removeForce, "force", "f", false, "skip confirmation")
 	rootCmd.AddCommand(removeCmd)
 }

@@ -11,7 +11,7 @@ import (
 var rootCmd = &cobra.Command{
 	Use:     "skillman",
 	Short:   "A package manager for Agent Skills",
-	Long:    "Skillman manages Agent Skills — install from GitHub or local paths, link into workspaces for any supported AI coding agent.",
+	Long:    "Skillman manages Agent Skills — install from GitHub or local paths into your workspace for any supported AI coding agent.",
 	Version: version.Version,
 }
 
