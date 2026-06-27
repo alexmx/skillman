@@ -98,6 +98,14 @@ You can rename an installed skill at any time. Updates keep tracking the origina
 skillman rename pdf acme-pdf   # or: skillman mv pdf acme-pdf
 ```
 
+### Install and Forget
+
+Pass `--no-track` to install a skill without recording it in `.skillman/config.yml`. The skill is set up and ready to use, but skillman won't manage it for `update` or `list`:
+
+```bash
+skillman install github.com/org/repo/pdf --no-track
+```
+
 ## Supported Agents
 
 | Agent | Skill Directory |

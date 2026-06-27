@@ -12,7 +12,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var installAs string
+var (
+	installAs      string
+	installNoTrack bool
+)
 
 var installCmd = &cobra.Command{
 	Use:   "install <source>",
@@ -37,13 +40,17 @@ Sources:
   skillman install ./my-skill
 
   # Install under a different name (alias)
-  skillman install github.com/anthropics/skills/pdf --as acme-pdf`,
+  skillman install github.com/anthropics/skills/pdf --as acme-pdf
+
+  # Install without recording it in .skillman/config.yml
+  skillman install github.com/anthropics/skills/pdf --no-track`,
 	Args: cobra.ExactArgs(1),
 	RunE: runInstall,
 }
 
 func init() {
 	installCmd.Flags().StringVar(&installAs, "as", "", "Install the skill under a different name (alias)")
+	installCmd.Flags().BoolVar(&installNoTrack, "no-track", false, "Install without recording the skill in .skillman/config.yml")
 	rootCmd.AddCommand(installCmd)
 }
 
@@ -174,7 +181,8 @@ func installName(sourceName string) string {
 }
 
 // installOne copies a skill into the workspace under name, links the agents,
-// rewrites the declared name when aliased, and records the config entry.
+// and rewrites the declared name when aliased. The config entry is recorded
+// unless --no-track was passed ("install and forget").
 func installOne(wd, name, sourceDir string, agents []agent.Agent, entry workspace.SkillEntry) error {
 	if workspace.SkillExistsInWorkspace(wd, name) {
 		fmt.Printf("Skill %q already installed, replacing.\n", name)
@@ -193,6 +201,11 @@ func installOne(wd, name, sourceDir string, agents []agent.Agent, entry workspac
 
 	for _, ws := range installed {
 		fmt.Printf("Installed %s for %s\n", ws.Name, ws.Agent)
+	}
+
+	if installNoTrack {
+		fmt.Printf("Not tracking %q in config (--no-track).\n", name)
+		return nil
 	}
 
 	if err := workspace.UpsertSkillEntry(wd, entry); err != nil {

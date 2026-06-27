@@ -19,6 +19,33 @@ func writeFakeSkill(t *testing.T, name string) string {
 	return dir
 }
 
+func TestInstallOne_NoTrack(t *testing.T) {
+	installNoTrack = true
+	defer func() { installNoTrack = false }()
+
+	wd := t.TempDir()
+	src := writeFakeSkill(t, "use-something")
+
+	entry := workspace.SkillEntry{Name: "use-something", Source: "local", Path: src}
+	if err := installOne(wd, entry.Name, src, agent.All(), entry); err != nil {
+		t.Fatalf("installOne error: %v", err)
+	}
+
+	// Skill is installed and symlinked...
+	if !workspace.SkillExistsInWorkspace(wd, "use-something") {
+		t.Error("expected skill to be installed in .skillman/skills/")
+	}
+	if _, err := os.Stat(filepath.Join(wd, ".claude/skills/use-something")); err != nil {
+		t.Errorf("expected agent symlink to resolve: %v", err)
+	}
+
+	// ...but not recorded in config.
+	wc, _ := workspace.LoadWorkspaceConfig(wd)
+	if wc != nil && wc.FindSkillEntry("use-something") != nil {
+		t.Error("expected skill NOT to be recorded in config with --no-track")
+	}
+}
+
 func TestInstallOne_Alias(t *testing.T) {
 	wd := t.TempDir()
 	src := writeFakeSkill(t, "use-something")
