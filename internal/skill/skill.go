@@ -13,6 +13,10 @@ import (
 var nameRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 var consecutiveHyphens = regexp.MustCompile(`--`)
 
+// nameFieldLine matches a top-level `name:` line in YAML frontmatter (not an
+// indented one nested under another key like metadata).
+var nameFieldLine = regexp.MustCompile(`(?m)^name:[ \t]*.*$`)
+
 type Frontmatter struct {
 	Name          string            `yaml:"name"`
 	Description   string            `yaml:"description"`
@@ -128,4 +132,63 @@ func Validate(s *Skill) []ValidationError {
 func LoadFromDir(dir string) (*Skill, error) {
 	skillFile := filepath.Join(dir, "SKILL.md")
 	return Parse(skillFile)
+}
+
+// ValidateName checks a skill name (e.g. an install alias) against the same
+// rules Validate enforces for the frontmatter name field.
+func ValidateName(name string) error {
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if len(name) > 64 {
+		return fmt.Errorf("name must be at most 64 characters")
+	}
+	if !nameRegex.MatchString(name) {
+		return fmt.Errorf("name must contain only lowercase letters, numbers, and hyphens, and must not start or end with a hyphen")
+	}
+	if consecutiveHyphens.MatchString(name) {
+		return fmt.Errorf("name must not contain consecutive hyphens")
+	}
+	return nil
+}
+
+// SetName rewrites the top-level `name:` field in dir/SKILL.md's frontmatter.
+// Used when installing under an alias or renaming, so the skill's declared name
+// stays consistent with its directory name. The rest of the file is preserved
+// byte-for-byte.
+func SetName(dir, newName string) error {
+	path := filepath.Join(dir, "SKILL.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading SKILL.md: %w", err)
+	}
+	updated, err := setNameField(string(data), newName)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(updated), 0o644)
+}
+
+func setNameField(content, newName string) (string, error) {
+	leading := content[:len(content)-len(strings.TrimLeft(content, " \t\r\n"))]
+	trimmed := content[len(leading):]
+	if !strings.HasPrefix(trimmed, "---") {
+		return "", fmt.Errorf("SKILL.md must start with YAML frontmatter (---)")
+	}
+
+	rest := trimmed[3:]
+	idx := strings.Index(rest, "\n---")
+	if idx == -1 {
+		return "", fmt.Errorf("SKILL.md frontmatter is not closed (missing closing ---)")
+	}
+
+	fm := rest[:idx]
+	after := rest[idx:]
+	if nameFieldLine.MatchString(fm) {
+		fm = nameFieldLine.ReplaceAllLiteralString(fm, "name: "+newName)
+	} else {
+		fm = "\nname: " + newName + fm
+	}
+
+	return leading + "---" + fm + after, nil
 }

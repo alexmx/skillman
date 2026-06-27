@@ -5,11 +5,14 @@ import (
 	"os"
 
 	"github.com/alexmx/skillman/internal/agent"
+	"github.com/alexmx/skillman/internal/skill"
 	"github.com/alexmx/skillman/internal/source"
 	"github.com/alexmx/skillman/internal/tui"
 	"github.com/alexmx/skillman/internal/workspace"
 	"github.com/spf13/cobra"
 )
+
+var installAs string
 
 var installCmd = &cobra.Command{
 	Use:   "install <source>",
@@ -31,17 +34,27 @@ Sources:
   skillman install github.com/anthropics/skills@v1.0
 
   # Install from a local directory
-  skillman install ./my-skill`,
+  skillman install ./my-skill
+
+  # Install under a different name (alias)
+  skillman install github.com/anthropics/skills/pdf --as acme-pdf`,
 	Args: cobra.ExactArgs(1),
 	RunE: runInstall,
 }
 
 func init() {
+	installCmd.Flags().StringVar(&installAs, "as", "", "Install the skill under a different name (alias)")
 	rootCmd.AddCommand(installCmd)
 }
 
 func runInstall(cmd *cobra.Command, args []string) error {
 	ref := source.ParseRef(args[0])
+
+	if installAs != "" {
+		if err := skill.ValidateName(installAs); err != nil {
+			return fmt.Errorf("invalid --as name: %w", err)
+		}
+	}
 
 	wd, err := os.Getwd()
 	if err != nil {
@@ -60,7 +73,12 @@ func installLocal(ref source.ParsedRef, wd string) error {
 		return err
 	}
 
+	name := installName(result.Name)
+
 	fmt.Printf("Skill: %s\n", result.Name)
+	if name != result.Name {
+		fmt.Printf("Install as: %s\n", name)
+	}
 	fmt.Printf("Source: %s\n\n", result.SourceDir)
 
 	yes, err := tui.Confirm("Install this skill?")
@@ -81,24 +99,16 @@ func installLocal(ref source.ParsedRef, wd string) error {
 		return nil
 	}
 
-	if workspace.SkillExistsInWorkspace(wd, result.Name) {
-		fmt.Printf("Skill %q already installed, replacing.\n", result.Name)
-	}
-
-	installed, err := workspace.Install(wd, result.Name, result.SourceDir, agents)
-	if err != nil {
-		return fmt.Errorf("installing %s: %w", result.Name, err)
-	}
-	for _, ws := range installed {
-		fmt.Printf("Installed %s for %s\n", ws.Name, ws.Agent)
-	}
-
-	if err := workspace.UpsertSkillEntry(wd, workspace.SkillEntry{
-		Name:   result.Name,
+	entry := workspace.SkillEntry{
+		Name:   name,
 		Source: "local",
 		Path:   result.SourceDir,
-	}); err != nil {
-		return fmt.Errorf("updating config: %w", err)
+	}
+	if name != result.Name {
+		entry.OriginalName = result.Name
+	}
+	if err := installOne(wd, name, result.SourceDir, agents, entry); err != nil {
+		return err
 	}
 
 	fmt.Println()
@@ -120,6 +130,10 @@ func installGitHub(ref source.ParsedRef, wd string) error {
 		return nil
 	}
 
+	if installAs != "" && len(results) > 1 {
+		return fmt.Errorf("--as can only be used when installing a single skill (%d selected)", len(results))
+	}
+
 	// Then pick agents
 	agents, err := pickAgents(wd)
 	if err != nil {
@@ -131,30 +145,59 @@ func installGitHub(ref source.ParsedRef, wd string) error {
 	}
 
 	for _, result := range results {
-		if workspace.SkillExistsInWorkspace(wd, result.Name) {
-			fmt.Printf("Skill %q already installed, replacing.\n", result.Name)
-		}
-
-		installed, err := workspace.Install(wd, result.Name, result.SourceDir, agents)
-		if err != nil {
-			return fmt.Errorf("installing %s: %w", result.Name, err)
-		}
-		for _, ws := range installed {
-			fmt.Printf("Installed %s for %s\n", ws.Name, ws.Agent)
-		}
-
-		if err := workspace.UpsertSkillEntry(wd, workspace.SkillEntry{
-			Name:   result.Name,
+		name := installName(result.Name)
+		entry := workspace.SkillEntry{
+			Name:   name,
 			Source: result.Source,
 			Ref:    result.Ref,
 			Commit: result.CommitSHA,
-		}); err != nil {
-			return fmt.Errorf("updating config: %w", err)
+		}
+		if name != result.Name {
+			entry.OriginalName = result.Name
+		}
+		if err := installOne(wd, name, result.SourceDir, agents, entry); err != nil {
+			return err
 		}
 	}
 
 	fmt.Println()
 	printSecurityWarning()
+	return nil
+}
+
+// installName returns the alias when --as was given, otherwise the source name.
+func installName(sourceName string) string {
+	if installAs != "" {
+		return installAs
+	}
+	return sourceName
+}
+
+// installOne copies a skill into the workspace under name, links the agents,
+// rewrites the declared name when aliased, and records the config entry.
+func installOne(wd, name, sourceDir string, agents []agent.Agent, entry workspace.SkillEntry) error {
+	if workspace.SkillExistsInWorkspace(wd, name) {
+		fmt.Printf("Skill %q already installed, replacing.\n", name)
+	}
+
+	installed, err := workspace.Install(wd, name, sourceDir, agents)
+	if err != nil {
+		return fmt.Errorf("installing %s: %w", name, err)
+	}
+
+	if entry.OriginalName != "" {
+		if err := skill.SetName(workspace.SkillmanSkillPath(wd, name), name); err != nil {
+			return fmt.Errorf("setting skill name: %w", err)
+		}
+	}
+
+	for _, ws := range installed {
+		fmt.Printf("Installed %s for %s\n", ws.Name, ws.Agent)
+	}
+
+	if err := workspace.UpsertSkillEntry(wd, entry); err != nil {
+		return fmt.Errorf("updating config: %w", err)
+	}
 	return nil
 }
 

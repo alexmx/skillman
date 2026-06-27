@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/alexmx/skillman/internal/agent"
+	"github.com/alexmx/skillman/internal/skill"
 	"gopkg.in/yaml.v3"
 )
 
@@ -18,11 +19,21 @@ const (
 
 // SkillEntry tracks a skill's source information in the workspace config.
 type SkillEntry struct {
-	Name   string `yaml:"name"`
-	Source string `yaml:"source"`           // "github.com/org/repo" or "local"
-	Ref    string `yaml:"ref,omitempty"`    // git ref (tag, branch)
-	Commit string `yaml:"commit,omitempty"` // resolved commit SHA
-	Path   string `yaml:"path,omitempty"`   // original path for local skills
+	Name         string `yaml:"name"`
+	OriginalName string `yaml:"original_name,omitempty"` // skill's name in its source, when installed under an alias
+	Source       string `yaml:"source"`                  // "github.com/org/repo" or "local"
+	Ref          string `yaml:"ref,omitempty"`           // git ref (tag, branch)
+	Commit       string `yaml:"commit,omitempty"`        // resolved commit SHA
+	Path         string `yaml:"path,omitempty"`          // original path for local skills
+}
+
+// SourceName returns the name to look the skill up by in its source. It differs
+// from Name only when the skill was installed under an alias.
+func (e SkillEntry) SourceName() string {
+	if e.OriginalName != "" {
+		return e.OriginalName
+	}
+	return e.Name
 }
 
 // WorkspaceConfig is the .skillman/config.yml file.
@@ -143,6 +154,54 @@ func Remove(workspaceRoot string, skillName string) ([]string, error) {
 	}
 
 	return removed, nil
+}
+
+// Rename moves .skillman/skills/{oldName} to {newName}, rewrites the skill's
+// declared name to match, and re-points the agent symlinks that referenced it.
+// It returns the names of the agents whose symlinks were re-pointed.
+func Rename(workspaceRoot, oldName, newName string) ([]string, error) {
+	oldDir := SkillmanSkillPath(workspaceRoot, oldName)
+	newDir := SkillmanSkillPath(workspaceRoot, newName)
+
+	if _, err := os.Stat(oldDir); err != nil {
+		return nil, fmt.Errorf("skill %q not found in .skillman/skills/", oldName)
+	}
+	if _, err := os.Stat(newDir); err == nil {
+		return nil, fmt.Errorf("a skill named %q already exists", newName)
+	}
+
+	// Capture which agents currently link the old skill before moving anything.
+	var linkedAgents []agent.Agent
+	for _, a := range agent.All() {
+		linkPath := filepath.Join(workspaceRoot, a.SkillPath, oldName)
+		info, err := os.Lstat(linkPath)
+		if err != nil {
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			linkedAgents = append(linkedAgents, a)
+		}
+	}
+
+	if err := os.Rename(oldDir, newDir); err != nil {
+		return nil, fmt.Errorf("renaming skill directory: %w", err)
+	}
+
+	if err := skill.SetName(newDir, newName); err != nil {
+		return nil, fmt.Errorf("updating skill name: %w", err)
+	}
+
+	// Drop the stale symlinks, then create fresh ones pointing at the new dir.
+	var agentNames []string
+	for _, a := range linkedAgents {
+		os.Remove(filepath.Join(workspaceRoot, a.SkillPath, oldName))
+		agentNames = append(agentNames, a.Name)
+	}
+	if _, err := EnsureSymlinks(workspaceRoot, newName, linkedAgents); err != nil {
+		return nil, err
+	}
+
+	return agentNames, nil
 }
 
 // Status returns all workspace skills by scanning .skillman/skills/ and checking agent symlinks.
@@ -269,6 +328,29 @@ func UpsertSkillEntry(workspaceRoot string, entry SkillEntry) error {
 
 	wc.Skills = append(wc.Skills, entry)
 	return SaveWorkspaceConfig(workspaceRoot, wc)
+}
+
+// RenameSkillEntry renames a skill entry in the config, preserving the source
+// name so remote/local updates keep resolving to the right upstream skill.
+func RenameSkillEntry(workspaceRoot, oldName, newName string) error {
+	wc, err := LoadWorkspaceConfig(workspaceRoot)
+	if err != nil {
+		return err
+	}
+	if wc == nil {
+		return nil
+	}
+
+	for i := range wc.Skills {
+		if wc.Skills[i].Name == oldName {
+			if wc.Skills[i].OriginalName == "" {
+				wc.Skills[i].OriginalName = oldName
+			}
+			wc.Skills[i].Name = newName
+			return SaveWorkspaceConfig(workspaceRoot, wc)
+		}
+	}
+	return fmt.Errorf("skill %q not found in workspace config", oldName)
 }
 
 // RemoveSkillEntry removes a skill entry from the config by name.

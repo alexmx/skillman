@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/alexmx/skillman/internal/skill"
 	"github.com/alexmx/skillman/internal/source"
 	"github.com/alexmx/skillman/internal/tui"
 	"github.com/alexmx/skillman/internal/workspace"
@@ -91,15 +92,15 @@ func updateLocalSkill(wd string, entry workspace.SkillEntry) error {
 		return fmt.Errorf("fetching %s: %w", entry.Name, err)
 	}
 
-	destPath := workspace.SkillmanSkillPath(wd, result.Name)
-	if err := workspace.CopyDir(result.SourceDir, destPath); err != nil {
-		return fmt.Errorf("updating %s: %w", entry.Name, err)
+	if err := copyIntoWorkspace(wd, entry, result); err != nil {
+		return err
 	}
 
 	if err := workspace.UpsertSkillEntry(wd, workspace.SkillEntry{
-		Name:   entry.Name,
-		Source: "local",
-		Path:   entry.Path,
+		Name:         entry.Name,
+		OriginalName: entry.OriginalName,
+		Source:       "local",
+		Path:         entry.Path,
 	}); err != nil {
 		return fmt.Errorf("updating config: %w", err)
 	}
@@ -109,13 +110,13 @@ func updateLocalSkill(wd string, entry workspace.SkillEntry) error {
 }
 
 func updateFromRepo(wd string, repoSource string, entries []workspace.SkillEntry) error {
-	skillNames := make([]string, len(entries))
+	sourceNames := make([]string, len(entries))
 	for i, e := range entries {
-		skillNames[i] = e.Name
+		sourceNames[i] = e.SourceName()
 	}
 
 	fmt.Printf("Fetching %s...\n", repoSource)
-	results, cleanup, err := source.FetchGitHubMultiple(repoSource, skillNames, "")
+	results, cleanup, err := source.FetchGitHubMultiple(repoSource, sourceNames, "")
 	if err != nil {
 		return fmt.Errorf("fetching %s: %w", repoSource, err)
 	}
@@ -123,33 +124,32 @@ func updateFromRepo(wd string, repoSource string, entries []workspace.SkillEntry
 		defer cleanup()
 	}
 
-	// Index results by name
-	resultByName := make(map[string]source.FetchResult, len(results))
+	// Index results by the skill's source name.
+	resultBySource := make(map[string]source.FetchResult, len(results))
 	for _, r := range results {
-		resultByName[r.Name] = r
+		resultBySource[r.Name] = r
 	}
 
-	// Index entries by name for commit comparison
-	entryByName := make(map[string]workspace.SkillEntry, len(entries))
-	for _, e := range entries {
-		entryByName[e.Name] = e
+	// Pair each entry with its fetched result, keeping only those with updates.
+	type pending struct {
+		entry  workspace.SkillEntry
+		result source.FetchResult
 	}
-
-	// Filter to skills that have updates available
-	var updatable []string
+	var updatable []pending
+	var dispNames []string
 	var updateDescs []string
-	for _, name := range skillNames {
-		entry := entryByName[name]
-		result, found := resultByName[name]
+	for _, entry := range entries {
+		result, found := resultBySource[entry.SourceName()]
 		if !found {
-			fmt.Printf("Warning: skill %q not found in %s\n", name, repoSource)
+			fmt.Printf("Warning: skill %q not found in %s\n", entry.SourceName(), repoSource)
 			continue
 		}
 		if result.CommitSHA == entry.Commit {
-			fmt.Printf("Skill %q is already up to date (%s).\n", name, shortSHA(entry.Commit))
+			fmt.Printf("Skill %q is already up to date (%s).\n", entry.Name, shortSHA(entry.Commit))
 			continue
 		}
-		updatable = append(updatable, name)
+		updatable = append(updatable, pending{entry, result})
+		dispNames = append(dispNames, entry.Name)
 		updateDescs = append(updateDescs, fmt.Sprintf("%s -> %s", shortSHA(entry.Commit), shortSHA(result.CommitSHA)))
 	}
 
@@ -160,7 +160,7 @@ func updateFromRepo(wd string, repoSource string, entries []workspace.SkillEntry
 	// Let user pick which skills to update
 	selected := updatable
 	if len(updatable) > 1 {
-		indices, err := tui.PickSkills("Select skills to update", updatable, updateDescs)
+		indices, err := tui.PickSkills("Select skills to update", dispNames, updateDescs)
 		if err != nil {
 			return err
 		}
@@ -174,27 +174,39 @@ func updateFromRepo(wd string, repoSource string, entries []workspace.SkillEntry
 		}
 	}
 
-	for _, name := range selected {
-		entry := entryByName[name]
-		result := resultByName[name]
-
-		destPath := workspace.SkillmanSkillPath(wd, result.Name)
-		if err := workspace.CopyDir(result.SourceDir, destPath); err != nil {
-			return fmt.Errorf("updating %s: %w", name, err)
+	for _, p := range selected {
+		if err := copyIntoWorkspace(wd, p.entry, &p.result); err != nil {
+			return err
 		}
 
 		if err := workspace.UpsertSkillEntry(wd, workspace.SkillEntry{
-			Name:   name,
-			Source: entry.Source,
-			Ref:    result.Ref,
-			Commit: result.CommitSHA,
+			Name:         p.entry.Name,
+			OriginalName: p.entry.OriginalName,
+			Source:       p.entry.Source,
+			Ref:          p.result.Ref,
+			Commit:       p.result.CommitSHA,
 		}); err != nil {
 			return fmt.Errorf("updating config: %w", err)
 		}
 
-		fmt.Printf("Updated %q to %s.\n", name, shortSHA(result.CommitSHA))
+		fmt.Printf("Updated %q to %s.\n", p.entry.Name, shortSHA(p.result.CommitSHA))
 	}
 
+	return nil
+}
+
+// copyIntoWorkspace copies a freshly fetched skill into the workspace under the
+// entry's (possibly aliased) name, rewriting the declared name when aliased.
+func copyIntoWorkspace(wd string, entry workspace.SkillEntry, result *source.FetchResult) error {
+	destPath := workspace.SkillmanSkillPath(wd, entry.Name)
+	if err := workspace.CopyDir(result.SourceDir, destPath); err != nil {
+		return fmt.Errorf("updating %s: %w", entry.Name, err)
+	}
+	if entry.Name != result.Name {
+		if err := skill.SetName(destPath, entry.Name); err != nil {
+			return fmt.Errorf("setting skill name: %w", err)
+		}
+	}
 	return nil
 }
 

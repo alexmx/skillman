@@ -3,6 +3,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alexmx/skillman/internal/agent"
@@ -90,6 +91,86 @@ func TestRemove(t *testing.T) {
 	// Verify .skillman/skills/test-skill removed
 	if _, err := os.Stat(filepath.Join(workDir, ".skillman", "skills", "test-skill")); !os.IsNotExist(err) {
 		t.Error("expected .skillman/skills/test-skill to be removed")
+	}
+}
+
+func TestRename(t *testing.T) {
+	workDir, agents := testSetup(t)
+	skillDir := createFakeSkill(t)
+
+	Install(workDir, "test-skill", skillDir, agents)
+
+	renamed, err := Rename(workDir, "test-skill", "new-skill")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(renamed) != 4 {
+		t.Fatalf("expected 4 agents re-linked, got %d", len(renamed))
+	}
+
+	// Old dir gone, new dir present.
+	if _, err := os.Stat(SkillmanSkillPath(workDir, "test-skill")); !os.IsNotExist(err) {
+		t.Error("expected old skill dir to be gone")
+	}
+	if _, err := os.Stat(SkillmanSkillPath(workDir, "new-skill")); err != nil {
+		t.Errorf("expected new skill dir to exist: %v", err)
+	}
+
+	// Declared name was rewritten to match.
+	data, _ := os.ReadFile(filepath.Join(SkillmanSkillPath(workDir, "new-skill"), "SKILL.md"))
+	if !strings.Contains(string(data), "name: new-skill") {
+		t.Errorf("SKILL.md name not rewritten: %s", data)
+	}
+
+	// Old symlink removed, new symlink present and valid.
+	if _, err := os.Lstat(filepath.Join(workDir, ".claude/skills/test-skill")); !os.IsNotExist(err) {
+		t.Error("expected old symlink to be removed")
+	}
+	link := filepath.Join(workDir, ".claude/skills/new-skill")
+	if _, err := os.Stat(link); err != nil {
+		t.Errorf("expected new symlink to resolve: %v", err)
+	}
+}
+
+func TestRename_TargetExists(t *testing.T) {
+	workDir, agents := testSetup(t)
+	skillDir := createFakeSkill(t)
+	Install(workDir, "test-skill", skillDir, agents)
+
+	// Create a colliding target dir.
+	os.MkdirAll(SkillmanSkillPath(workDir, "taken"), 0o755)
+
+	if _, err := Rename(workDir, "test-skill", "taken"); err == nil {
+		t.Error("expected error when target name already exists")
+	}
+}
+
+func TestRenameSkillEntry(t *testing.T) {
+	dir := t.TempDir()
+	SaveWorkspaceConfig(dir, &WorkspaceConfig{
+		Skills: []SkillEntry{
+			{Name: "pdf", Source: "github.com/org/repo", Commit: "abc"},
+		},
+	})
+
+	if err := RenameSkillEntry(dir, "pdf", "acme-pdf"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wc, _ := LoadWorkspaceConfig(dir)
+	e := wc.FindSkillEntry("acme-pdf")
+	if e == nil {
+		t.Fatal("expected to find renamed entry")
+	}
+	// Source name preserved so update still resolves upstream.
+	if e.OriginalName != "pdf" {
+		t.Errorf("OriginalName = %q, want %q", e.OriginalName, "pdf")
+	}
+	if e.SourceName() != "pdf" {
+		t.Errorf("SourceName() = %q, want %q", e.SourceName(), "pdf")
+	}
+	if wc.FindSkillEntry("pdf") != nil {
+		t.Error("expected old entry name to be gone")
 	}
 }
 

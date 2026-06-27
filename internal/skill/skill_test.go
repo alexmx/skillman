@@ -202,6 +202,63 @@ func TestValidate_CompatibilityTooLong(t *testing.T) {
 	}
 }
 
+func TestValidateName(t *testing.T) {
+	cases := []struct {
+		name    string
+		wantErr bool
+	}{
+		{"valid-name", false},
+		{"a", false},
+		{"", true},
+		{"Has-Upper", true},
+		{"double--hyphen", true},
+		{"-leading", true},
+		{strings.Repeat("a", 65), true},
+	}
+	for _, tc := range cases {
+		err := ValidateName(tc.name)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("ValidateName(%q) err=%v, wantErr=%v", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
+func TestSetName(t *testing.T) {
+	dir := t.TempDir()
+	content := `---
+name: original-skill
+description: A skill with metadata that has its own name key.
+metadata:
+  name: keep-me
+  version: "1.0"
+---
+
+# Original Skill
+
+Body stays intact.
+`
+	os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o644)
+
+	if err := SetName(dir, "renamed-skill"); err != nil {
+		t.Fatalf("SetName error: %v", err)
+	}
+
+	s, err := LoadFromDir(dir)
+	if err != nil {
+		t.Fatalf("reload error: %v", err)
+	}
+	if s.Frontmatter.Name != "renamed-skill" {
+		t.Errorf("name = %q, want %q", s.Frontmatter.Name, "renamed-skill")
+	}
+	// The nested metadata.name must be untouched, and the body preserved.
+	if s.Frontmatter.Metadata["name"] != "keep-me" {
+		t.Errorf("metadata.name = %q, want %q", s.Frontmatter.Metadata["name"], "keep-me")
+	}
+	if !strings.Contains(s.Body, "Body stays intact.") {
+		t.Errorf("body was altered: %q", s.Body)
+	}
+}
+
 func TestParse_FromFile(t *testing.T) {
 	dir := t.TempDir()
 	skillDir := filepath.Join(dir, "my-skill")
